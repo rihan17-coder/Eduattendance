@@ -27,6 +27,7 @@ interface StudentFormData {
   roll: string;
   dept: string;
   year: string;
+  section: string;
 }
 
 export default function Students() {
@@ -42,6 +43,7 @@ export default function Students() {
     roll: '',
     dept: 'AI & DS',
     year: '2nd Year',
+    section: 'Section A',
   });
   
   // Dropdown menu state per row
@@ -57,6 +59,7 @@ export default function Students() {
       roll: '',
       dept: 'AI & DS',
       year: '2nd Year',
+      section: 'Section A',
     });
     setEditingStudentId(null);
     setIsModalOpen(true);
@@ -68,6 +71,7 @@ export default function Students() {
       roll: student.roll,
       dept: student.dept,
       year: student.year,
+      section: student.section || 'Section A',
     });
     setEditingStudentId(student.id);
     setIsModalOpen(true);
@@ -102,6 +106,7 @@ export default function Students() {
         roll: formData.roll,
         dept: formData.dept,
         year: formData.year,
+        section: formData.section,
         status: 'good', // will auto update on next attendance take
       };
       const updated = [...students, newStudent];
@@ -219,7 +224,7 @@ export default function Students() {
               <th>Student</th>
               <th>Roll No.</th>
               <th>Department</th>
-              <th>Year</th>
+              <th>Class &amp; Sec</th>
               <th>Attendance</th>
               <th>Status</th>
               <th style={{ width: 60 }}></th>
@@ -249,7 +254,7 @@ export default function Students() {
                     {student.roll}
                   </td>
                   <td><span className="badge badge-primary">{student.dept}</span></td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{student.year}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{student.year} — {student.section || 'Section A'}</td>
                   <td>
                     <div className="flex items-center gap-2">
                       <div className="progress-bar" style={{ width: 72 }}>
@@ -440,6 +445,19 @@ export default function Students() {
                   <option value="2nd Year">2nd Year</option>
                   <option value="3rd Year">3rd Year</option>
                   <option value="4th Year">4th Year</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Section</label>
+                <select 
+                  className="form-select"
+                  value={formData.section}
+                  onChange={e => setFormData({ ...formData, section: e.target.value })}
+                >
+                  <option value="Section A">Section A</option>
+                  <option value="Section B">Section B</option>
+                  <option value="Section C">Section C</option>
                 </select>
               </div>
 

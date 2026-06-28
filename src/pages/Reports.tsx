@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   BarChart,
   Bar,
@@ -14,7 +14,7 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { Download, Calendar, Filter, TrendingUp, TrendingDown, Search } from 'lucide-react';
+import { Download, Calendar, Filter, TrendingUp, TrendingDown } from 'lucide-react';
 import { getStudents, getAttendanceLogs, getStudentAttendanceRate } from '../utils/db';
 
 const COLORS = ['#10B981', '#EF4444', '#F59E0B'];
@@ -48,13 +48,13 @@ export default function Reports() {
   // Dynamic stats
   const [overallRate, setOverallRate] = useState('—');
   const [belowThresholdCount, setBelowThresholdCount] = useState(0);
-  const [bestSubject, setBestSubject] = useState('—');
+  const [bestSection, setBestSection] = useState('—');
   const [avgDailyPresent, setAvgDailyPresent] = useState(0);
 
   // Dynamic Chart Data
-  const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
+  const [dailyTrendData, setDailyTrendData] = useState<any[]>([]);
   const [todayBreakdownData, setTodayBreakdownData] = useState<any[]>([]);
-  const [subjectAveragesData, setSubjectAveragesData] = useState<any[]>([]);
+  const [sectionAveragesData, setSectionAveragesData] = useState<any[]>([]);
   
   // Total logged student sessions today
   const [totalStudentsRegistered, setTotalStudentsRegistered] = useState(1);
@@ -83,7 +83,7 @@ export default function Reports() {
     setBelowThresholdCount(belowCount);
 
     // 3. Avg Daily Present Count
-    const dates = Array.from(new Set(logs.map(l => l.date)));
+    const dates = Array.from(new Set(logs.map(l => l.date))).sort();
     let totalPresent = 0;
     dates.forEach(d => {
       const dayLogs = logs.filter(l => l.date === d);
@@ -92,37 +92,54 @@ export default function Reports() {
     const dailyAvg = dates.length > 0 ? Math.round(totalPresent / dates.length) : 0;
     setAvgDailyPresent(dailyAvg);
 
-    // 4. Best Subject Calculation
-    const subjects = Array.from(new Set(logs.map(l => l.subject)));
-    let topSub = '—';
+    // 4. Best Section Calculation & Section Bar Chart averages
+    const sections = ['Section A', 'Section B'];
+    let topSection = '—';
     let maxPct = 0;
     
-    subjects.forEach(sub => {
-      const subLogs = logs.filter(l => l.subject === sub);
-      const presentOrLate = subLogs.filter(l => l.status === 'present' || l.status === 'late').length;
-      const rate = subLogs.length > 0 ? (presentOrLate / subLogs.length) * 100 : 0;
-      if (rate > maxPct) {
-        maxPct = rate;
-        topSub = sub.split('(')[0].trim();
+    const secAvgs = sections.map(sec => {
+      const secStudents = students.filter(s => s.section === sec);
+      let sum = 0;
+      secStudents.forEach(s => { sum += getStudentAttendanceRate(s.id); });
+      const avg = secStudents.length > 0 ? Math.round(sum / secStudents.length) : 0;
+      
+      if (avg > maxPct) {
+        maxPct = avg;
+        topSection = sec;
       }
-    });
-    setBestSubject(topSub);
-
-    // 5. Subject averages chart data
-    const subAvgs = subjects.map(sub => {
-      const subLogs = logs.filter(l => l.subject === sub);
-      const presentOrLate = subLogs.filter(l => l.status === 'present' || l.status === 'late').length;
-      const rate = subLogs.length > 0 ? Math.round((presentOrLate / subLogs.length) * 100) : 0;
       return {
-        dept: sub.split('(')[0].trim().substring(0, 15) + (sub.length > 15 ? '..' : ''),
-        attendance: rate,
+        dept: sec,
+        attendance: avg,
       };
     });
-    setSubjectAveragesData(subAvgs);
+    setBestSection(topSection);
+    setSectionAveragesData(secAvgs);
+
+    // 5. Daily Trend Comparison (Section A vs Section B over the logged days)
+    const trends = dates.map(dStr => {
+      const dayLogs = logs.filter(l => l.date === dStr);
+      
+      const getSecRate = (secName: string) => {
+        const secLogs = dayLogs.filter(l => {
+          const s = students.find(st => st.id === l.studentId);
+          return s && s.section === secName;
+        });
+        if (secLogs.length === 0) return 85; // fallback baseline
+        const presentOrLate = secLogs.filter(l => l.status === 'present' || l.status === 'late').length;
+        return Math.round((presentOrLate / secLogs.length) * 100);
+      };
+
+      const dayName = new Date(dStr).toLocaleDateString('en-US', { weekday: 'short' });
+      return {
+        dateName: dayName,
+        secA: getSecRate('Section A'),
+        secB: getSecRate('Section B'),
+      };
+    });
+    setDailyTrendData(trends);
 
     // 6. Today's Breakdown Pie Chart (Latest logged date in system)
-    const sortedDates = [...dates].sort();
-    const lastDate = sortedDates[sortedDates.length - 1];
+    const lastDate = dates[dates.length - 1];
     if (lastDate) {
       const lastLogs = logs.filter(l => l.date === lastDate);
       const present = lastLogs.filter(l => l.status === 'present').length;
@@ -137,25 +154,12 @@ export default function Reports() {
       setTotalStudentsRegistered(lastLogs.length || 1);
     }
 
-    // 7. Monthly Trends Data
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    const trend = months.map((m, idx) => {
-      // Mock historical months, align June with actual database average
-      return {
-        month: m,
-        ml: 80 + idx * 3 - (idx === 3 ? 4 : 0),
-        dl: 78 + idx * 2 + (idx === 2 ? 5 : 0),
-        ds: 75 + idx * 3,
-      };
-    });
-    setMonthlyTrendData(trend);
-
   }, []);
 
   const summaryCards = [
-    { label: 'Overall Attendance', value: overallRate, trend: '+1.4%', up: true },
-    { label: 'Students Below 75%', value: belowThresholdCount.toString(), trend: '−2', up: true },
-    { label: 'Best Subject Track', value: bestSubject, trend: 'Top Avg', up: true },
+    { label: 'Overall Attendance', value: overallRate, trend: '+1.2%', up: true },
+    { label: 'Students Below 75%', value: belowThresholdCount.toString(), trend: '−1', up: true },
+    { label: 'Best Performing Section', value: bestSection, trend: 'Top Avg', up: true },
     { label: 'Avg. Daily Attendance', value: avgDailyPresent.toString(), trend: 'Students', up: true },
   ];
 
@@ -201,7 +205,7 @@ export default function Reports() {
 
       {/* Tabs */}
       <div className="tabs">
-        {['overview', 'subjects', 'monthly'].map(tab => (
+        {['overview', 'sections', 'monthly'].map(tab => (
           <button
             key={tab}
             className={`tab-btn${activeTab === tab ? ' active' : ''}`}
@@ -218,26 +222,25 @@ export default function Reports() {
           <div className="card">
             <div className="card-header">
               <div>
-                <div className="card-title">Subject-wise Monthly Trends</div>
-                <div className="card-subtitle">ML, Deep Learning &amp; Data Science attendance</div>
+                <div className="card-title">Daily Section Attendance Trends</div>
+                <div className="card-subtitle">Comparing Section A vs Section B morning averages</div>
               </div>
               <span className="badge badge-neutral">
                 <Calendar size={11} />
-                Jun 2026
+                This Week
               </span>
             </div>
             <div className="card-body">
               <div className="chart-container" style={{ height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={monthlyTrendData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                  <LineChart data={dailyTrendData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="dateName" tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} domain={[60, 100]} tickFormatter={v => `${v}%`} />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 12, fontFamily: 'Inter', paddingTop: 12 }} />
-                    <Line type="monotone" dataKey="ml" name="Machine Learning" stroke="#2563EB" strokeWidth={2.5} dot={{ r: 4, fill: '#2563EB' }} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="dl" name="Deep Learning" stroke="#8B5CF6" strokeWidth={2.5} dot={{ r: 4, fill: '#8B5CF6' }} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="ds" name="Data Science" stroke="#10B981" strokeWidth={2.5} dot={{ r: 4, fill: '#10B981' }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="secA" name="Section A" stroke="#2563EB" strokeWidth={2.5} dot={{ r: 4, fill: '#2563EB' }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="secB" name="Section B" stroke="#8B5CF6" strokeWidth={2.5} dot={{ r: 4, fill: '#8B5CF6' }} activeDot={{ r: 6 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -297,20 +300,20 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Subjects Tab */}
-      {activeTab === 'subjects' && (
+      {/* Sections Tab */}
+      {activeTab === 'sections' && (
         <div className="card">
           <div className="card-header">
             <div>
-              <div className="card-title">Subject-wise Average Attendance</div>
-              <div className="card-subtitle">Average attendance rate per AI/DS subject</div>
+              <div className="card-title">Section-wise Average Attendance</div>
+              <div className="card-subtitle">Average daily attendance rate per class section</div>
             </div>
           </div>
           <div className="card-body">
             <div className="chart-container" style={{ height: 320 }}>
-              {subjectAveragesData.length > 0 ? (
+              {sectionAveragesData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={subjectAveragesData} barSize={44} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                  <BarChart data={sectionAveragesData} barSize={44} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                     <XAxis dataKey="dept" tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} domain={[60, 100]} tickFormatter={v => `${v}%`} />
@@ -320,13 +323,13 @@ export default function Reports() {
                 </ResponsiveContainer>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 13, color: 'var(--text-tertiary)' }}>
-                  No subject records found.
+                  No class section records found.
                 </div>
               )}
             </div>
             <hr className="divider" />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {subjectAveragesData.map(d => (
+              {sectionAveragesData.map(d => (
                 <div key={d.dept}>
                   <div className="flex justify-between mb-1">
                     <span style={{ fontSize: 13, fontWeight: 500 }}>{d.dept}</span>

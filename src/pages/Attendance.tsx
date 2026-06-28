@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Filter,
@@ -12,15 +12,8 @@ import {
 } from 'lucide-react';
 import { getStudents, getAttendanceLogs, saveAttendanceLogs, updateStudentStatuses } from '../utils/db';
 
-const SUBJECTS = [
-  'Machine Learning (AI301)',
-  'Deep Learning (AI302)',
-  'Data Visualization (DS201)',
-  'Natural Language Processing (AI401)',
-  'Computer Vision (AI402)',
-  'Big Data Analytics (DS301)',
-  'Python for AI (AI101)',
-];
+const DEPARTMENTS = ['AI & DS', 'CSE', 'ECE', 'ME'];
+const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
 const SECTIONS = ['Section A', 'Section B', 'Section C'];
 
 const avatarColors = ['avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-orange', 'avatar-teal', 'avatar-pink'];
@@ -29,7 +22,8 @@ type Status = 'present' | 'absent' | 'late' | null;
 
 export default function Attendance() {
   const [students, setStudents] = useState<any[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0]);
+  const [selectedDept, setSelectedDept] = useState(DEPARTMENTS[0]);
+  const [selectedYear, setSelectedYear] = useState(YEARS[1]); // Default 2nd Year where seed is located
   const [selectedSection, setSelectedSection] = useState(SECTIONS[0]);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [search, setSearch] = useState('');
@@ -40,24 +34,30 @@ export default function Attendance() {
   // Load students and previous logs for current subject + section + date
   useEffect(() => {
     const list = getStudents();
-    setStudents(list);
-
-    // Fetch existing attendance logs
-    const logs = getAttendanceLogs();
-    const currentLogs = logs.filter(
-      l => l.date === date && l.subject === selectedSubject && l.section === selectedSection
+    // Filter students by class parameters (Department, Year, Section)
+    const classStudents = list.filter(
+      s => s.dept === selectedDept && 
+           s.year === selectedYear && 
+           (s.section === selectedSection || (!s.section && selectedSection === 'Section A'))
     );
+    setStudents(classStudents);
+
+    // Fetch existing daily attendance logs for this date
+    const logs = getAttendanceLogs();
+    const currentLogs = logs.filter(l => l.date === date);
 
     const initialAttendance: Record<string, Status> = {};
-    // Pre-populate with existing logs if found, otherwise null
-    list.forEach(student => {
+    classStudents.forEach(student => {
       const record = currentLogs.find(l => l.studentId === student.id);
       initialAttendance[student.id] = record ? record.status : null;
     });
 
     setAttendance(initialAttendance);
-    setSaved(currentLogs.length > 0);
-  }, [selectedSubject, selectedSection, date]);
+    
+    // Check if fully marked and saved previously
+    const hasAnySaved = classStudents.length > 0 && classStudents.every(s => initialAttendance[s.id] !== null);
+    setSaved(hasAnySaved);
+  }, [selectedDept, selectedYear, selectedSection, date]);
 
   const filtered = students.filter(s =>
     s.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,29 +79,28 @@ export default function Attendance() {
   const handleSave = () => {
     setSaving(true);
     
-    // Simulate API delay
     setTimeout(() => {
       const logs = getAttendanceLogs();
-      // Remove previous logs for this exact combination
+      const studentIds = students.map(s => s.id);
+      
+      // Filter out existing logs for these specific students on this date
       const filteredLogs = logs.filter(
-        l => !(l.date === date && l.subject === selectedSubject && l.section === selectedSection)
+        l => !(l.date === date && studentIds.includes(l.studentId))
       );
 
-      // Create new logs
+      // Create new logs (uniqueness guaranteed per student per date)
       const newRecords = Object.entries(attendance)
-        .filter(([_, status]) => status !== null)
+        .filter(([studentId, status]) => status !== null && studentIds.includes(studentId))
         .map(([studentId, status]) => ({
-          id: `${date}_${selectedSubject}_${selectedSection}_${studentId}`,
+          id: `${date}_${studentId}`,
           date,
-          subject: selectedSubject,
-          section: selectedSection,
           studentId,
           status: status as 'present' | 'absent' | 'late',
         }));
 
       const updatedLogs = [...filteredLogs, ...newRecords];
       saveAttendanceLogs(updatedLogs);
-      updateStudentStatuses(); // refresh students status good/low/warning
+      updateStudentStatuses(); // refresh student standing metrics
       
       setSaving(false);
       setSaved(true);
@@ -136,17 +135,32 @@ export default function Attendance() {
 
       {/* Filters Bar */}
       <div className="card mb-5">
-        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
           <div className="form-group">
-            <label className="form-label">Subject</label>
+            <label className="form-label">Department</label>
             <div style={{ position: 'relative' }}>
               <select
                 className="form-select"
-                value={selectedSubject}
-                onChange={e => setSelectedSubject(e.target.value)}
+                value={selectedDept}
+                onChange={e => setSelectedDept(e.target.value)}
                 style={{ paddingRight: 36 }}
               >
-                {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+              </select>
+              <ChevronDown size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Year</label>
+            <div style={{ position: 'relative' }}>
+              <select
+                className="form-select"
+                value={selectedYear}
+                onChange={e => setSelectedYear(e.target.value)}
+                style={{ paddingRight: 36 }}
+              >
+                {YEARS.map(y => <option key={y}>{y}</option>)}
               </select>
               <ChevronDown size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
             </div>
@@ -180,11 +194,6 @@ export default function Attendance() {
               <Calendar size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
             </div>
           </div>
-
-          <button className="btn btn-secondary" style={{ height: 38 }}>
-            <Filter size={14} />
-            Filter
-          </button>
         </div>
       </div>
 
@@ -197,7 +206,7 @@ export default function Attendance() {
             </div>
             <div>
               <div className="insight-chip-val" style={{ color: 'var(--success)' }}>{presentCount}</div>
-              <div className="insight-chip-label">Present</div>
+              <div className="insight-chip-label">Present Today</div>
             </div>
           </div>
           <div className="insight-chip" style={{ flex: 1 }}>
@@ -206,7 +215,7 @@ export default function Attendance() {
             </div>
             <div>
               <div className="insight-chip-val" style={{ color: 'var(--danger)' }}>{absentCount}</div>
-              <div className="insight-chip-label">Absent</div>
+              <div className="insight-chip-label">Absent Today</div>
             </div>
           </div>
           <div className="insight-chip" style={{ flex: 1 }}>
@@ -215,7 +224,7 @@ export default function Attendance() {
             </div>
             <div>
               <div className="insight-chip-val" style={{ color: 'var(--warning)' }}>{lateCount}</div>
-              <div className="insight-chip-label">Late</div>
+              <div className="insight-chip-label">Late Arrivals</div>
             </div>
           </div>
           <div className="insight-chip" style={{ flex: 1 }}>
@@ -224,7 +233,7 @@ export default function Attendance() {
             </div>
             <div>
               <div className="insight-chip-val">{students.length}</div>
-              <div className="insight-chip-label">Total Students</div>
+              <div className="insight-chip-label">Total Class Enrolled</div>
             </div>
           </div>
         </div>
@@ -330,10 +339,10 @@ export default function Attendance() {
                 <td colSpan={6}>
                   <div className="empty-state">
                     <div className="empty-state-icon">
-                      <Search size={22} />
+                      <Users size={22} />
                     </div>
                     <div className="empty-state-title">No students found</div>
-                    <div className="empty-state-desc">Try adding some students in Student Directory first.</div>
+                    <div className="empty-state-desc">No students are currently enrolled under this Department, Year, and Section.</div>
                   </div>
                 </td>
               </tr>

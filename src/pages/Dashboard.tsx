@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -7,8 +7,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  AreaChart,
-  Area,
 } from 'recharts';
 import {
   Users,
@@ -18,11 +16,9 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
-  ArrowUpRight,
   Plus,
   Download,
   Calendar,
-  Activity,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getStudents, getFaculty, getAttendanceLogs, getStudentAttendanceRate } from '../utils/db';
@@ -53,7 +49,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function Dashboard() {
   const [studentCount, setStudentCount] = useState(0);
   const [facultyCount, setFacultyCount] = useState(0);
-  const [activeClassesCount, setActiveClassesCount] = useState(0);
+  const [activeSectionsCount, setActiveSectionsCount] = useState(0);
   const [todayAttendanceRate, setTodayAttendanceRate] = useState<string>('—');
   const [avgAttendanceRate, setAvgAttendanceRate] = useState<string>('—');
   
@@ -64,10 +60,9 @@ export default function Dashboard() {
 
   // Dynamic Chart Data
   const [weeklyChartData, setWeeklyChartData] = useState<any[]>([]);
-  const [monthlyChartData, setMonthlyChartData] = useState<any[]>([]);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [subjectRankings, setSubjectRankings] = useState<any[]>([]);
-  const [scheduleClasses, setScheduleClasses] = useState<any[]>([]);
+  const [sectionStandings, setSectionStandings] = useState<any[]>([]);
+  const [sectionOverview, setSectionOverview] = useState<any[]>([]);
 
   useEffect(() => {
     const students = getStudents();
@@ -77,30 +72,18 @@ export default function Dashboard() {
     setStudentCount(students.length);
     setFacultyCount(faculty.length);
 
-    // Active classes = total unique subjects taught
-    const subjects = new Set<string>();
-    faculty.forEach(f => f.subjects.forEach(s => subjects.add(s)));
-    setActiveClassesCount(subjects.size);
-
-    // Dynamic schedule list based on active subjects
-    const schedule = Array.from(subjects).slice(0, 3).map((sub, i) => {
-      const times = ['09:00 AM', '11:00 AM', '02:00 PM'];
-      const rooms = ['AI Lab 101', 'GPU Lab 203', 'DS Lab 305'];
-      const fac = faculty.find(f => f.subjects.includes(sub))?.name || 'Faculty Member';
-      return {
-        subject: sub.split('(')[0].trim(),
-        time: times[i % times.length],
-        room: rooms[i % rooms.length],
-        faculty: fac,
-        students: Math.floor(Math.random() * 15) + 30,
-      };
-    });
-    setScheduleClasses(schedule);
+    // Count active sections in system (Section A, B)
+    const sections = new Set<string>();
+    students.forEach(s => { if (s.section) sections.add(s.section); });
+    setActiveSectionsCount(sections.size || 2);
 
     // Get today's date code
     const todayStr = new Date().toISOString().split('T')[0];
     const todayLogs = logs.filter(l => l.date === todayStr);
 
+    let displayLogs = todayLogs;
+    let selectedDateLabel = 'Today';
+    
     if (todayLogs.length > 0) {
       const present = todayLogs.filter(l => l.status === 'present').length;
       const absent = todayLogs.filter(l => l.status === 'absent').length;
@@ -116,7 +99,9 @@ export default function Dashboard() {
       const dates = Array.from(new Set(logs.map(l => l.date))).sort();
       const lastDate = dates[dates.length - 1];
       if (lastDate) {
+        selectedDateLabel = lastDate;
         const lastLogs = logs.filter(l => l.date === lastDate);
+        displayLogs = lastLogs;
         const present = lastLogs.filter(l => l.status === 'present').length;
         const absent = lastLogs.filter(l => l.status === 'absent').length;
         const late = lastLogs.filter(l => l.status === 'late').length;
@@ -162,41 +147,54 @@ export default function Dashboard() {
       { name: 'Fri', attendance: 0, target: 80 },
     ]);
 
-    // Dynamic Monthly Trend
-    const monthlyTrendData = [
-      { month: 'Jan', rate: 88 },
-      { month: 'Feb', rate: 85 },
-      { month: 'Mar', rate: 90 },
-      { month: 'Apr', rate: 89 },
-      { month: 'May', rate: 92 },
-      { month: 'Jun', rate: todayLogs.length > 0 ? Math.round((todayLogs.filter(l => l.status === 'present' || l.status === 'late').length / todayLogs.length) * 100) : 94 },
-    ];
-    setMonthlyChartData(monthlyTrendData);
-
-    // Subject breakdown percentages
-    const subList = Array.from(subjects);
-    const rankings = subList.map((sub, idx) => {
-      const subLogs = logs.filter(l => l.subject === sub);
-      const presentOrLate = subLogs.filter(l => l.status === 'present' || l.status === 'late').length;
-      const pct = subLogs.length > 0 ? Math.round((presentOrLate / subLogs.length) * 100) : 90 - idx * 4;
-      const colors = ['blue', 'purple', 'green', 'yellow', 'red', 'teal'];
+    // Section overview list for the dashboard table (combining students list and logs)
+    const sectionList = ['Section A', 'Section B'];
+    const overview = sectionList.map((sec) => {
+      const secStudents = students.filter(s => s.section === sec);
+      const secLogs = displayLogs.filter(l => {
+        const stud = students.find(s => s.id === l.studentId);
+        return stud && stud.section === sec;
+      });
+      const marked = secLogs.length > 0;
+      const presentOrLate = secLogs.filter(l => l.status === 'present' || l.status === 'late').length;
+      const pct = marked ? Math.round((presentOrLate / secLogs.length) * 100) : 0;
+      
       return {
-        dept: sub.split('(')[0].trim(),
-        pct,
+        section: sec,
+        time: marked ? '09:15 AM' : '—',
+        officer: sec === 'Section A' ? 'Dr. Arun Patel' : 'Prof. Meena Rao',
+        total: secStudents.length,
+        rate: marked ? `${pct}%` : '—',
+        status: marked ? 'Marked' : 'Pending',
+      };
+    });
+    setSectionOverview(overview);
+
+    // Section-wise Standings (historical averages)
+    const standings = sectionList.map((sec, idx) => {
+      const secStudents = students.filter(s => s.section === sec);
+      let sum = 0;
+      secStudents.forEach(s => { sum += getStudentAttendanceRate(s.id); });
+      const avg = secStudents.length > 0 ? Math.round(sum / secStudents.length) : 0;
+      const colors = ['blue', 'purple', 'green'];
+      return {
+        section: sec,
+        pct: avg,
         color: colors[idx % colors.length],
       };
-    }).sort((a, b) => b.pct - a.pct);
-    setSubjectRankings(rankings);
+    });
+    setSectionStandings(standings);
 
     // Recent dynamic activities
     const sortedLogs = [...logs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
     const activities = sortedLogs.map((log, idx) => {
-      const studentName = students.find(s => s.id === log.studentId)?.name || 'Student';
+      const student = students.find(s => s.id === log.studentId);
+      const studentName = student ? student.name : 'Student';
+      const secLabel = student && student.section ? ` (${student.section})` : '';
       const statusText = log.status.charAt(0).toUpperCase() + log.status.slice(1);
-      const colors = ['success', 'info', 'warning', 'danger'];
       return {
-        text: `${studentName} was marked ${statusText} for ${log.subject.split('(')[0]}`,
-        time: idx === 0 ? 'Just now' : `${idx * 12} mins ago`,
+        text: `${studentName}${secLabel} was marked ${statusText} on daily roll`,
+        time: idx === 0 ? 'Just now' : `${idx * 8} mins ago`,
         type: log.status === 'present' ? 'success' : log.status === 'absent' ? 'danger' : 'warning',
       };
     });
@@ -265,13 +263,13 @@ export default function Dashboard() {
             AI &amp; DS Department Portal
           </h2>
           <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)', maxWidth: 420 }}>
-            Tracking attendance across Machine Learning, Deep Learning, NLP, Computer Vision &amp; Data Science subjects.
+            Tracking daily morning attendance across Machine Learning, Deep Learning &amp; Data Science tracks.
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: 16, position: 'relative', zIndex: 1, flexShrink: 0 }}>
           {[
-            { label: 'AI Subjects', value: activeClassesCount },
+            { label: 'Classes & Sec', value: activeSectionsCount },
             { label: 'Avg Attendance', value: avgAttendanceRate },
             { label: 'Active Labs', value: '4' },
           ].map(item => (
@@ -320,9 +318,9 @@ export default function Dashboard() {
               <BookOpen size={20} />
             </div>
           </div>
-          <div className="stat-value">{activeClassesCount}</div>
-          <div className="stat-label">Active Classes</div>
-          <div className="stat-meta">Subjects tracked</div>
+          <div className="stat-value">{activeSectionsCount}</div>
+          <div className="stat-label">Active Sections</div>
+          <div className="stat-meta">Morning rolls tracked</div>
         </div>
 
         <div className="stat-card">
@@ -333,7 +331,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-value">{todayAttendanceRate}</div>
           <div className="stat-label">Latest Recorded Rate</div>
-          <div className="stat-meta">Simulated daily average</div>
+          <div className="stat-meta">Daily averages logs</div>
         </div>
       </div>
 
@@ -348,10 +346,6 @@ export default function Dashboard() {
                 <div className="card-title">Weekly Attendance Overview</div>
                 <div className="card-subtitle">Daily rates compared with institutional target</div>
               </div>
-              <span className="badge badge-neutral">
-                <Calendar size={11} />
-                This Week
-              </span>
             </div>
             <div className="card-body">
               <div className="chart-container" style={{ height: 260 }}>
@@ -368,31 +362,31 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Timetable / Classes */}
+          {/* Timetable / Classes Section overview */}
           <div className="card">
             <div className="card-header">
               <div>
-                <div className="card-title">Today's Class Schedule</div>
-                <div className="card-subtitle">AI &amp; Data Science subject tracks</div>
+                <div className="card-title">Today's Section Standings</div>
+                <div className="card-subtitle">AI &amp; Data Science daily morning rolls</div>
               </div>
             </div>
             <div className="table-wrapper" style={{ margin: '0 -24px -24px' }}>
               <table>
                 <thead>
                   <tr>
-                    <th>Subject</th>
-                    <th>Time</th>
-                    <th>Room</th>
-                    <th>Faculty</th>
+                    <th>Section</th>
+                    <th>Time Marked</th>
+                    <th>Class Advisor</th>
                     <th>Students</th>
+                    <th>Daily Rate</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {scheduleClasses.map((cls, i) => (
+                  {sectionOverview.map((cls, i) => (
                     <tr key={i}>
                       <td>
-                        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{cls.subject}</span>
+                        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{cls.section}</span>
                       </td>
                       <td>
                         <div className="flex items-center gap-2">
@@ -400,25 +394,20 @@ export default function Dashboard() {
                           <span>{cls.time}</span>
                         </div>
                       </td>
-                      <td>{cls.room}</td>
-                      <td>{cls.faculty}</td>
+                      <td>{cls.officer}</td>
                       <td>
-                        <span className="badge badge-neutral">{cls.students} students</span>
+                        <span className="badge badge-neutral">{cls.total} enrolled</span>
                       </td>
                       <td>
-                        <span className={`badge ${i === 0 ? 'badge-primary' : 'badge-neutral'}`}>
-                          {i === 0 ? 'Ongoing' : 'Upcoming'}
+                        <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>{cls.rate}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${cls.status === 'Marked' ? 'badge-success' : 'badge-neutral'}`}>
+                          {cls.status}
                         </span>
                       </td>
                     </tr>
                   ))}
-                  {scheduleClasses.length === 0 && (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: '24px var(--text-secondary)' }}>
-                        No classes scheduled. Add faculty members and subjects to view timetable.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -439,7 +428,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="insight-chip-val" style={{ color: 'var(--success)' }}>{presentToday}</div>
-                  <div className="insight-chip-label">Present</div>
+                  <div className="insight-chip-label">Present Today</div>
                 </div>
               </div>
               <div className="insight-chip">
@@ -448,7 +437,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="insight-chip-val" style={{ color: 'var(--danger)' }}>{absentToday}</div>
-                  <div className="insight-chip-label">Absent</div>
+                  <div className="insight-chip-label">Absent Today</div>
                 </div>
               </div>
               <div className="insight-chip">
@@ -519,17 +508,17 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Department Attendance */}
+          {/* Department Attendance standings */}
           <div className="card">
             <div className="card-header">
-              <div className="card-title">Subject Standings</div>
+              <div className="card-title">Section-wise Standings</div>
               <span className="badge badge-neutral">Average</span>
             </div>
             <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {subjectRankings.slice(0, 5).map((d) => (
-                <div key={d.dept}>
+              {sectionStandings.map((d) => (
+                <div key={d.section}>
                   <div className="flex justify-between mb-1">
-                    <span style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 500 }}>{d.dept}</span>
+                    <span style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 500 }}>{d.section}</span>
                     <span style={{ fontSize: 12.5, fontWeight: 700, color: d.pct >= 80 ? 'var(--success)' : d.pct >= 75 ? 'var(--warning)' : 'var(--danger)' }}>{d.pct}%</span>
                   </div>
                   <div className="progress-bar">
@@ -537,9 +526,6 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
-              {subjectRankings.length === 0 && (
-                <p style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No standings data available.</p>
-              )}
             </div>
           </div>
         </div>
