@@ -15,7 +15,7 @@ import {
   Legend,
 } from 'recharts';
 import { Download, Calendar, Filter, TrendingUp, TrendingDown } from 'lucide-react';
-import { getStudents, getAttendanceLogs, getStudentAttendanceRate } from '../utils/db';
+import { getStudents, getAttendanceLogs, getStudentAttendanceRate, showToast } from '../utils/db';
 
 const COLORS = ['#10B981', '#EF4444', '#F59E0B'];
 
@@ -178,7 +178,7 @@ export default function Reports() {
                 <Filter size={13} />
                 Print Reports
               </button>
-              <button className="btn btn-primary btn-sm" onClick={() => alert('PDF export generated and saved to downloads!')}>
+              <button className="btn btn-primary btn-sm" onClick={() => showToast('Attendance PDF report exported to downloads', 'success')}>
                 <Download size={13} />
                 Export PDF
               </button>

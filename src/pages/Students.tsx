@@ -12,7 +12,7 @@ import {
   Trash2,
   Edit2,
 } from 'lucide-react';
-import { getStudents, saveStudents, getStudentAttendanceRate } from '../utils/db';
+import { getStudents, saveStudents, getStudentAttendanceRate, showToast } from '../utils/db';
 
 const statusMeta = {
   good: { badge: 'badge-success', label: 'Good', icon: CheckCircle },
@@ -51,6 +51,18 @@ export default function Students() {
 
   useEffect(() => {
     setStudents(getStudents());
+
+    const handleGlobalSearch = () => {
+      const q = localStorage.getItem('global_search_query');
+      if (q !== null) {
+        setSearch(q);
+        localStorage.removeItem('global_search_query');
+      }
+    };
+    
+    handleGlobalSearch();
+    window.addEventListener('global-search', handleGlobalSearch);
+    return () => window.removeEventListener('global-search', handleGlobalSearch);
   }, []);
 
   const handleOpenAddModal = () => {
@@ -84,6 +96,7 @@ export default function Students() {
       saveStudents(updated);
       setStudents(updated);
       setActiveMenuId(null);
+      showToast('Student profile deleted', 'success');
     }
   };
 
@@ -98,6 +111,7 @@ export default function Students() {
       );
       saveStudents(updated);
       setStudents(updated);
+      showToast('Student details updated successfully', 'success');
     } else {
       // Add
       const newStudent = {
@@ -112,6 +126,7 @@ export default function Students() {
       const updated = [...students, newStudent];
       saveStudents(updated);
       setStudents(updated);
+      showToast('New student enrolled successfully', 'success');
     }
     setIsModalOpen(false);
   };

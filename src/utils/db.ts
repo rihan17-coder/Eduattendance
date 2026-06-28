@@ -344,3 +344,8 @@ export function getStudentAttendanceRate(studentId: string): number {
   const presentOrLate = studentLogs.filter(l => l.status === 'present' || l.status === 'late').length;
   return Math.round((presentOrLate / studentLogs.length) * 100);
 }
+
+export function showToast(message: string, type: 'success' | 'error' | 'info' = 'success') {
+  window.dispatchEvent(new CustomEvent('show-toast', { detail: { message, type } }));
+}
+

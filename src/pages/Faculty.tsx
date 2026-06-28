@@ -13,7 +13,7 @@ import {
   Trash2,
   Edit2,
 } from 'lucide-react';
-import { getFaculty, saveFaculty } from '../utils/db';
+import { getFaculty, saveFaculty, showToast } from '../utils/db';
 
 const avatarColors = ['avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-orange', 'avatar-teal', 'avatar-pink'];
 
@@ -48,6 +48,18 @@ export default function Faculty() {
 
   useEffect(() => {
     setFaculty(getFaculty());
+
+    const handleGlobalSearch = () => {
+      const q = localStorage.getItem('global_search_query');
+      if (q !== null) {
+        setSearch(q);
+        localStorage.removeItem('global_search_query');
+      }
+    };
+    
+    handleGlobalSearch();
+    window.addEventListener('global-search', handleGlobalSearch);
+    return () => window.removeEventListener('global-search', handleGlobalSearch);
   }, []);
 
   const handleOpenAddModal = () => {
@@ -83,6 +95,7 @@ export default function Faculty() {
       saveFaculty(updated);
       setFaculty(updated);
       setActiveMenuId(null);
+      showToast('Faculty member profile deleted', 'success');
     }
   };
 
@@ -102,6 +115,7 @@ export default function Faculty() {
       );
       saveFaculty(updated);
       setFaculty(updated);
+      showToast('Faculty details updated successfully', 'success');
     } else {
       // Add
       const initials = formData.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -122,6 +136,7 @@ export default function Faculty() {
       const updated = [...faculty, newFaculty];
       saveFaculty(updated);
       setFaculty(updated);
+      showToast('New faculty member added successfully', 'success');
     }
     setIsModalOpen(false);
   };
