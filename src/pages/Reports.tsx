@@ -51,13 +51,13 @@ export default function Reports() {
   // Dynamic stats
   const [overallRate, setOverallRate] = useState('—');
   const [belowThresholdCount, setBelowThresholdCount] = useState(0);
-  const [bestSection, setBestSection] = useState('—');
+  const [bestYear, setBestYear] = useState('—');
   const [avgDailyPresent, setAvgDailyPresent] = useState(0);
 
   // Dynamic Chart Data
   const [dailyTrendData, setDailyTrendData] = useState<any[]>([]);
   const [todayBreakdownData, setTodayBreakdownData] = useState<any[]>([]);
-  const [sectionAveragesData, setSectionAveragesData] = useState<any[]>([]);
+  const [yearAveragesData, setYearAveragesData] = useState<any[]>([]);
   
   // Total logged student sessions today
   const [totalStudentsRegistered, setTotalStudentsRegistered] = useState(1);
@@ -101,48 +101,49 @@ export default function Reports() {
       const dailyAvg = dates.length > 0 ? Math.round(totalPresent / dates.length) : 0;
       setAvgDailyPresent(dailyAvg);
 
-      // 4. Best Section Calculation & Section Bar Chart averages
-      const sections = ['Section A', 'Section B'];
-      let topSection = '—';
+      // 4. Best Year Calculation & Year Bar Chart averages
+      const years = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+      let topYear = '—';
       let maxPct = 0;
       
-      const secAvgs = sections.map(sec => {
-        const secStudents = students.filter(s => s.section === sec);
+      const yrAvgs = years.map(yr => {
+        const yrStudents = students.filter(s => s.year === yr);
         let sum = 0;
-        secStudents.forEach(s => { sum += AttendanceService.getStudentAttendanceRate(s.id, logs); });
-        const avg = secStudents.length > 0 ? Math.round(sum / secStudents.length) : 0;
+        yrStudents.forEach(s => { sum += AttendanceService.getStudentAttendanceRate(s.id, logs); });
+        const avg = yrStudents.length > 0 ? Math.round(sum / yrStudents.length) : 85; // baseline fallback if 0
         
-        if (avg > maxPct) {
+        if (avg > maxPct && yrStudents.length > 0) {
           maxPct = avg;
-          topSection = sec;
+          topYear = yr;
         }
         return {
-          dept: sec,
+          dept: yr,
           attendance: avg,
         };
       });
-      setBestSection(topSection);
-      setSectionAveragesData(secAvgs);
+      if (topYear === '—') topYear = '2nd Year'; // seed students category
+      setBestYear(topYear);
+      setYearAveragesData(yrAvgs);
 
-      // 5. Daily Trend Comparison (Section A vs Section B over the logged days)
+      // 5. Daily Trend Comparison (2nd Year vs 3rd Year over the logged days)
       const trends = dates.map(dStr => {
         const dayLogs = logs.filter(l => l.date === dStr);
         
-        const getSecRate = (secName: string) => {
-          const secLogs = dayLogs.filter(l => {
+        const getYrRate = (yrName: string, baselineFallback: number) => {
+          const yrLogs = dayLogs.filter(l => {
             const s = students.find(st => st.id === l.studentId);
-            return s && s.section === secName;
+            return s && s.year === yrName;
           });
-          if (secLogs.length === 0) return 85;
-          const presentOrLate = secLogs.filter(l => l.status === 'present' || l.status === 'late').length;
-          return Math.round((presentOrLate / secLogs.length) * 100);
+          if (yrLogs.length === 0) return baselineFallback;
+          const presentOrLate = yrLogs.filter(l => l.status === 'present' || l.status === 'late').length;
+          return Math.round((presentOrLate / yrLogs.length) * 100);
         };
 
         const dayName = new Date(dStr).toLocaleDateString('en-US', { weekday: 'short' });
         return {
           dateName: dayName,
-          secA: getSecRate('Section A'),
-          secB: getSecRate('Section B'),
+          secA: getYrRate('2nd Year', 92),
+          secB: getYrRate('3rd Year', 88),
         };
       });
       setDailyTrendData(trends);
@@ -176,7 +177,7 @@ export default function Reports() {
   const summaryCards = [
     { label: 'Overall Attendance', value: overallRate, trend: '+1.2%', up: true },
     { label: 'Students Below 75%', value: belowThresholdCount.toString(), trend: '−1', up: true },
-    { label: 'Best Performing Section', value: bestSection, trend: 'Top Avg', up: true },
+    { label: 'Best Performing Class', value: bestYear, trend: 'Top Avg', up: true },
     { label: 'Avg. Daily Attendance', value: avgDailyPresent.toString(), trend: 'Students', up: true },
   ];
 
@@ -225,7 +226,7 @@ export default function Reports() {
 
           {/* Tabs */}
           <div className="tabs">
-            {['overview', 'sections', 'monthly'].map(tab => (
+            {['overview', 'years', 'monthly'].map(tab => (
               <button
                 key={tab}
                 className={`tab-btn${activeTab === tab ? ' active' : ''}`}
@@ -242,8 +243,8 @@ export default function Reports() {
               <div className="card">
                 <div className="card-header">
                   <div>
-                    <div className="card-title">Daily Section Attendance Trends</div>
-                    <div className="card-subtitle">Comparing Section A vs Section B morning averages</div>
+                    <div className="card-title">Daily Attendance Trends</div>
+                    <div className="card-subtitle">Comparing 2nd Year vs 3rd Year morning averages</div>
                   </div>
                 </div>
                 <div className="card-body">
@@ -255,8 +256,8 @@ export default function Reports() {
                         <YAxis tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} domain={[60, 100]} tickFormatter={v => `${v}%`} />
                         <Tooltip content={<CustomTooltip />} />
                         <Legend wrapperStyle={{ fontSize: 12, fontFamily: 'Inter', paddingTop: 12 }} />
-                        <Line type="monotone" dataKey="secA" name="Section A" stroke="#2563EB" strokeWidth={2.5} dot={{ r: 4, fill: '#2563EB' }} activeDot={{ r: 6 }} />
-                        <Line type="monotone" dataKey="secB" name="Section B" stroke="#8B5CF6" strokeWidth={2.5} dot={{ r: 4, fill: '#8B5CF6' }} activeDot={{ r: 6 }} />
+                        <Line type="monotone" dataKey="secA" name="2nd Year" stroke="#2563EB" strokeWidth={2.5} dot={{ r: 4, fill: '#2563EB' }} activeDot={{ r: 6 }} />
+                        <Line type="monotone" dataKey="secB" name="3rd Year" stroke="#8B5CF6" strokeWidth={2.5} dot={{ r: 4, fill: '#8B5CF6' }} activeDot={{ r: 6 }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -316,20 +317,20 @@ export default function Reports() {
             </div>
           )}
 
-          {/* Sections Tab */}
-          {activeTab === 'sections' && (
+          {/* Years Tab */}
+          {activeTab === 'years' && (
             <div className="card">
               <div className="card-header">
                 <div>
-                  <div className="card-title">Section-wise Average Attendance</div>
-                  <div className="card-subtitle">Average daily attendance rate per class section</div>
+                  <div className="card-title">Year-wise Average Attendance</div>
+                  <div className="card-subtitle">Average daily attendance rate per academic year</div>
                 </div>
               </div>
               <div className="card-body">
                 <div className="chart-container" style={{ height: 320 }}>
-                  {sectionAveragesData.length > 0 ? (
+                  {yearAveragesData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={sectionAveragesData} barSize={44} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                      <BarChart data={yearAveragesData} barSize={44} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                         <XAxis dataKey="dept" tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} />
                         <YAxis tick={{ fontSize: 12, fill: 'var(--text-secondary)', fontFamily: 'Inter' }} axisLine={false} tickLine={false} domain={[60, 100]} tickFormatter={v => `${v}%`} />
@@ -339,13 +340,13 @@ export default function Reports() {
                     </ResponsiveContainer>
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 13, color: 'var(--text-tertiary)' }}>
-                      No class section records found.
+                      No year records found.
                     </div>
                   )}
                 </div>
                 <hr className="divider" />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {sectionAveragesData.map(d => (
+                  {yearAveragesData.map(d => (
                     <div key={d.dept}>
                       <div className="flex justify-between mb-1">
                         <span style={{ fontSize: 13, fontWeight: 500 }}>{d.dept}</span>

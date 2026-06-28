@@ -17,7 +17,6 @@ import {
   AlertCircle,
   Clock,
   Plus,
-  Download,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { StudentService } from '../services/StudentService';
@@ -51,7 +50,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function Dashboard() {
   const [studentCount, setStudentCount] = useState(0);
   const [facultyCount, setFacultyCount] = useState(0);
-  const [activeSectionsCount, setActiveSectionsCount] = useState(0);
+  const [activeYearsCount, setActiveYearsCount] = useState(4);
   const [todayAttendanceRate, setTodayAttendanceRate] = useState<string>('—');
   const [avgAttendanceRate, setAvgAttendanceRate] = useState<string>('—');
   const [loading, setLoading] = useState(true);
@@ -64,8 +63,8 @@ export default function Dashboard() {
   // Dynamic Chart Data
   const [weeklyChartData, setWeeklyChartData] = useState<any[]>([]);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [sectionStandings, setSectionStandings] = useState<any[]>([]);
-  const [sectionOverview, setSectionOverview] = useState<any[]>([]);
+  const [yearStandings, setYearStandings] = useState<any[]>([]);
+  const [yearOverview, setYearOverview] = useState<any[]>([]);
 
   const loadDashboardData = async (bypassCache = false) => {
     try {
@@ -78,9 +77,8 @@ export default function Dashboard() {
       setStudentCount(students.length);
       setFacultyCount(faculty.length);
 
-      const sections = new Set<string>();
-      students.forEach(s => { if (s.section) sections.add(s.section); });
-      setActiveSectionsCount(sections.size || 2);
+      const yearsList = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+      setActiveYearsCount(yearsList.length);
 
       const todayStr = new Date().toISOString().split('T')[0];
       const todayLogs = logs.filter(l => l.date === todayStr);
@@ -146,50 +144,58 @@ export default function Dashboard() {
         { name: 'Fri', attendance: 0, target: 80 },
       ]);
 
-      const sectionList = ['Section A', 'Section B'];
-      const overview = sectionList.map((sec) => {
-        const secStudents = students.filter(s => s.section === sec);
-        const secLogs = displayLogs.filter(l => {
+      // Year overview mapping
+      const overview = yearsList.map((yr) => {
+        const yrStudents = students.filter(s => s.year === yr);
+        const yrLogs = displayLogs.filter(l => {
           const stud = students.find(s => s.id === l.studentId);
-          return stud && stud.section === sec;
+          return stud && stud.year === yr;
         });
-        const marked = secLogs.length > 0;
-        const presentOrLate = secLogs.filter(l => l.status === 'present' || l.status === 'late').length;
-        const pct = marked ? Math.round((presentOrLate / secLogs.length) * 100) : 0;
+        const marked = yrLogs.length > 0;
+        const presentOrLate = yrLogs.filter(l => l.status === 'present' || l.status === 'late').length;
+        const pct = marked ? Math.round((presentOrLate / yrLogs.length) * 100) : 0;
         
+        const advisors: Record<string, string> = {
+          '1st Year': 'Dr. Arun Patel',
+          '2nd Year': 'Prof. Meena Rao',
+          '3rd Year': 'Dr. Suresh Kumar',
+          '4th Year': 'Ms. Anjali Singh',
+        };
+
         return {
-          section: sec,
+          classYr: yr,
           time: marked ? '09:15 AM' : '—',
-          officer: sec === 'Section A' ? 'Dr. Arun Patel' : 'Prof. Meena Rao',
-          total: secStudents.length,
+          officer: advisors[yr] || 'Faculty Member',
+          total: yrStudents.length,
           rate: marked ? `${pct}%` : '—',
           status: marked ? 'Marked' : 'Pending',
         };
       });
-      setSectionOverview(overview);
+      setYearOverview(overview);
 
-      const standings = sectionList.map((sec, idx) => {
-        const secStudents = students.filter(s => s.section === sec);
+      // Year-wise standings
+      const standings = yearsList.map((yr, idx) => {
+        const yrStudents = students.filter(s => s.year === yr);
         let sum = 0;
-        secStudents.forEach(s => { sum += AttendanceService.getStudentAttendanceRate(s.id, logs); });
-        const avg = secStudents.length > 0 ? Math.round(sum / secStudents.length) : 0;
-        const colors = ['blue', 'purple', 'green'];
+        yrStudents.forEach(s => { sum += AttendanceService.getStudentAttendanceRate(s.id, logs); });
+        const avg = yrStudents.length > 0 ? Math.round(sum / yrStudents.length) : 0;
+        const colors = ['blue', 'purple', 'green', 'yellow'];
         return {
-          section: sec,
-          pct: avg,
+          year: yr,
+          pct: yrStudents.length > 0 ? avg : 85, // fallback if empty
           color: colors[idx % colors.length],
         };
       });
-      setSectionStandings(standings);
+      setYearStandings(standings);
 
       const sortedLogs = [...logs].slice(0, 5);
       const activities = sortedLogs.map((log, idx) => {
         const student = students.find(s => s.id === log.studentId);
         const studentName = student ? student.name : 'Student';
-        const secLabel = student && student.section ? ` (${student.section})` : '';
+        const yrLabel = student ? ` (${student.year})` : '';
         const statusText = log.status.charAt(0).toUpperCase() + log.status.slice(1);
         return {
-          text: `${studentName}${secLabel} was marked ${statusText} on daily roll`,
+          text: `${studentName}${yrLabel} was marked ${statusText} on daily roll`,
           time: idx === 0 ? 'Just now' : `${idx * 8} mins ago`,
           type: log.status === 'present' ? 'success' : log.status === 'absent' ? 'danger' : 'warning',
         };
@@ -276,7 +282,7 @@ export default function Dashboard() {
 
             <div style={{ display: 'flex', gap: 16, position: 'relative', zIndex: 1, flexShrink: 0 }}>
               {[
-                { label: 'Classes & Sec', value: activeSectionsCount },
+                { label: 'Years Tracked', value: activeYearsCount },
                 { label: 'Avg Attendance', value: avgAttendanceRate },
                 { label: 'Active Labs', value: '4' },
               ].map(item => (
@@ -325,8 +331,8 @@ export default function Dashboard() {
                   <BookOpen size={20} />
                 </div>
               </div>
-              <div className="stat-value">{activeSectionsCount}</div>
-              <div className="stat-label">Active Sections</div>
+              <div className="stat-value">{activeYearsCount}</div>
+              <div className="stat-label">Active Years</div>
               <div className="stat-meta">Morning rolls tracked</div>
             </div>
 
@@ -369,19 +375,19 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Section standings */}
+              {/* Class Roll Standings */}
               <div className="card">
                 <div className="card-header">
                   <div>
-                    <div className="card-title">Today's Section Standings</div>
-                    <div className="card-subtitle">AI &amp; Data Science daily morning rolls</div>
+                    <div className="card-title">Today's Class Roll Status</div>
+                    <div className="card-subtitle">AI &amp; Data Science daily morning rolls by Year</div>
                   </div>
                 </div>
                 <div className="table-wrapper" style={{ margin: '0 -24px -24px' }}>
                   <table>
                     <thead>
                       <tr>
-                        <th>Section</th>
+                        <th>Class Year</th>
                         <th>Time Marked</th>
                         <th>Class Advisor</th>
                         <th>Students</th>
@@ -390,10 +396,10 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sectionOverview.map((cls, i) => (
+                      {yearOverview.map((cls, i) => (
                         <tr key={i}>
                           <td>
-                            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{cls.section}</span>
+                            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{cls.classYr}</span>
                           </td>
                           <td>
                             <div className="flex items-center gap-2">
@@ -515,17 +521,17 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Section standings */}
+              {/* Year standings */}
               <div className="card">
                 <div className="card-header">
-                  <div className="card-title">Section-wise Standings</div>
+                  <div className="card-title">Year-wise Standings</div>
                   <span className="badge badge-neutral">Average</span>
                 </div>
                 <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {sectionStandings.map((d) => (
-                    <div key={d.section}>
+                  {yearStandings.map((d) => (
+                    <div key={d.year}>
                       <div className="flex justify-between mb-1">
-                        <span style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 500 }}>{d.section}</span>
+                        <span style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 500 }}>{d.year}</span>
                         <span style={{ fontSize: 12.5, fontWeight: 700, color: d.pct >= 80 ? 'var(--success)' : d.pct >= 75 ? 'var(--warning)' : 'var(--danger)' }}>{d.pct}%</span>
                       </div>
                       <div className="progress-bar">

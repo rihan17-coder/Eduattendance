@@ -16,7 +16,6 @@ import { showToast, Student } from '../utils/db';
 
 const DEPARTMENTS = ['AI & DS', 'CSE', 'ECE', 'ME'];
 const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
-const SECTIONS = ['Section A', 'Section B', 'Section C'];
 
 const avatarColors = ['avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-orange', 'avatar-teal', 'avatar-pink'];
 
@@ -26,7 +25,6 @@ export default function Attendance() {
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedDept, setSelectedDept] = useState(DEPARTMENTS[0]);
   const [selectedYear, setSelectedYear] = useState(YEARS[1]); // Default 2nd Year where seed is located
-  const [selectedSection, setSelectedSection] = useState(SECTIONS[0]);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [search, setSearch] = useState('');
   const [attendance, setAttendance] = useState<Record<string, Status>>({});
@@ -34,16 +32,14 @@ export default function Attendance() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Load students and previous logs for current subject + section + date
+  // Load students and previous logs for current class + date
   const loadClassData = async () => {
     try {
       setLoading(true);
       const list = await StudentService.getStudents();
-      // Filter students by class parameters (Department, Year, Section)
+      // Filter students by class parameters (Department, Year)
       const classStudents = list.filter(
-        s => s.dept === selectedDept && 
-             s.year === selectedYear && 
-             (s.section === selectedSection || (!s.section && selectedSection === 'Section A'))
+        s => s.dept === selectedDept && s.year === selectedYear
       );
       setStudents(classStudents);
 
@@ -71,7 +67,7 @@ export default function Attendance() {
 
   useEffect(() => {
     loadClassData();
-  }, [selectedDept, selectedYear, selectedSection, date]);
+  }, [selectedDept, selectedYear, date]);
 
   const filtered = students.filter(s =>
     s.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -142,7 +138,7 @@ export default function Attendance() {
 
       {/* Filters Bar */}
       <div className="card mb-5">
-        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
+        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
           <div className="form-group">
             <label className="form-label">Department</label>
             <div style={{ position: 'relative' }}>
@@ -159,7 +155,7 @@ export default function Attendance() {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Year</label>
+            <label className="form-label">Year of Study</label>
             <div style={{ position: 'relative' }}>
               <select
                 className="form-select"
@@ -168,21 +164,6 @@ export default function Attendance() {
                 style={{ paddingRight: 36 }}
               >
                 {YEARS.map(y => <option key={y}>{y}</option>)}
-              </select>
-              <ChevronDown size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Section</label>
-            <div style={{ position: 'relative' }}>
-              <select
-                className="form-select"
-                value={selectedSection}
-                onChange={e => setSelectedSection(e.target.value)}
-                style={{ paddingRight: 36 }}
-              >
-                {SECTIONS.map(s => <option key={s}>{s}</option>)}
               </select>
               <ChevronDown size={14} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
             </div>
@@ -353,7 +334,7 @@ export default function Attendance() {
                           <Users size={22} />
                         </div>
                         <div className="empty-state-title">No students found</div>
-                        <div className="empty-state-desc">No students are currently enrolled under this Department, Year, and Section.</div>
+                        <div className="empty-state-desc">No students are currently enrolled under this Department and Year.</div>
                       </div>
                     </td>
                   </tr>
