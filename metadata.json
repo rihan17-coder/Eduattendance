@@ -1,0 +1,6 @@
+{
+  "name": "EduAttend Pro",
+  "description": "A comprehensive campus attendance management system with multi-role access for administrators, faculty, and students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
