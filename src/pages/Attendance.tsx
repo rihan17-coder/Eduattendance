@@ -10,7 +10,9 @@ import {
   ChevronDown,
   Users,
 } from 'lucide-react';
-import { getStudents, getAttendanceLogs, saveAttendanceLogs, updateStudentStatuses } from '../utils/db';
+import { StudentService } from '../services/StudentService';
+import { AttendanceService } from '../services/AttendanceService';
+import { showToast, Student } from '../utils/db';
 
 const DEPARTMENTS = ['AI & DS', 'CSE', 'ECE', 'ME'];
 const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
@@ -21,7 +23,7 @@ const avatarColors = ['avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-or
 type Status = 'present' | 'absent' | 'late' | null;
 
 export default function Attendance() {
-  const [students, setStudents] = useState<any[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [selectedDept, setSelectedDept] = useState(DEPARTMENTS[0]);
   const [selectedYear, setSelectedYear] = useState(YEARS[1]); // Default 2nd Year where seed is located
   const [selectedSection, setSelectedSection] = useState(SECTIONS[0]);
@@ -30,33 +32,45 @@ export default function Attendance() {
   const [attendance, setAttendance] = useState<Record<string, Status>>({});
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Load students and previous logs for current subject + section + date
+  const loadClassData = async () => {
+    try {
+      setLoading(true);
+      const list = await StudentService.getStudents();
+      // Filter students by class parameters (Department, Year, Section)
+      const classStudents = list.filter(
+        s => s.dept === selectedDept && 
+             s.year === selectedYear && 
+             (s.section === selectedSection || (!s.section && selectedSection === 'Section A'))
+      );
+      setStudents(classStudents);
+
+      // Fetch existing daily attendance logs for this date
+      const logs = await AttendanceService.getAttendanceLogs();
+      const currentLogs = logs.filter(l => l.date === date);
+
+      const initialAttendance: Record<string, Status> = {};
+      classStudents.forEach(student => {
+        const record = currentLogs.find(l => l.studentId === student.id);
+        initialAttendance[student.id] = record ? record.status : null;
+      });
+
+      setAttendance(initialAttendance);
+      
+      // Check if fully marked and saved previously
+      const hasAnySaved = classStudents.length > 0 && classStudents.every(s => initialAttendance[s.id] !== null);
+      setSaved(hasAnySaved);
+      setLoading(false);
+    } catch (err) {
+      showToast('Error loading daily attendance roster', 'error');
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const list = getStudents();
-    // Filter students by class parameters (Department, Year, Section)
-    const classStudents = list.filter(
-      s => s.dept === selectedDept && 
-           s.year === selectedYear && 
-           (s.section === selectedSection || (!s.section && selectedSection === 'Section A'))
-    );
-    setStudents(classStudents);
-
-    // Fetch existing daily attendance logs for this date
-    const logs = getAttendanceLogs();
-    const currentLogs = logs.filter(l => l.date === date);
-
-    const initialAttendance: Record<string, Status> = {};
-    classStudents.forEach(student => {
-      const record = currentLogs.find(l => l.studentId === student.id);
-      initialAttendance[student.id] = record ? record.status : null;
-    });
-
-    setAttendance(initialAttendance);
-    
-    // Check if fully marked and saved previously
-    const hasAnySaved = classStudents.length > 0 && classStudents.every(s => initialAttendance[s.id] !== null);
-    setSaved(hasAnySaved);
+    loadClassData();
   }, [selectedDept, selectedYear, selectedSection, date]);
 
   const filtered = students.filter(s =>
@@ -76,35 +90,28 @@ export default function Attendance() {
     setSaved(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true);
-    
-    setTimeout(() => {
-      const logs = getAttendanceLogs();
-      const studentIds = students.map(s => s.id);
-      
-      // Filter out existing logs for these specific students on this date
-      const filteredLogs = logs.filter(
-        l => !(l.date === date && studentIds.includes(l.studentId))
-      );
-
-      // Create new logs (uniqueness guaranteed per student per date)
-      const newRecords = Object.entries(attendance)
-        .filter(([studentId, status]) => status !== null && studentIds.includes(studentId))
+    try {
+      // Create new logs
+      const recordsToSave = Object.entries(attendance)
+        .filter(([_, status]) => status !== null)
         .map(([studentId, status]) => ({
-          id: `${date}_${studentId}`,
           date,
           studentId,
           status: status as 'present' | 'absent' | 'late',
+          markedBy: 'Dr. Arun Patel',
         }));
 
-      const updatedLogs = [...filteredLogs, ...newRecords];
-      saveAttendanceLogs(updatedLogs);
-      updateStudentStatuses(); // refresh student standing metrics
-      
+      await AttendanceService.saveAttendanceLogs(recordsToSave);
       setSaving(false);
       setSaved(true);
-    }, 600);
+      showToast('Daily attendance saved to database', 'success');
+      loadClassData();
+    } catch (err) {
+      showToast('Failed to save daily attendance', 'error');
+      setSaving(false);
+    }
   };
 
   const presentCount = Object.values(attendance).filter(v => v === 'present').length;
@@ -197,170 +204,176 @@ export default function Attendance() {
         </div>
       </div>
 
-      {/* Attendance Summary */}
-      {totalMarked > 0 && (
-        <div className="flex gap-3 mb-5">
-          <div className="insight-chip" style={{ flex: 1 }}>
-            <div className="insight-chip-icon" style={{ background: 'var(--success-soft)', color: 'var(--success)' }}>
-              <CheckCircle size={15} />
-            </div>
-            <div>
-              <div className="insight-chip-val" style={{ color: 'var(--success)' }}>{presentCount}</div>
-              <div className="insight-chip-label">Present Today</div>
-            </div>
-          </div>
-          <div className="insight-chip" style={{ flex: 1 }}>
-            <div className="insight-chip-icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>
-              <XCircle size={15} />
-            </div>
-            <div>
-              <div className="insight-chip-val" style={{ color: 'var(--danger)' }}>{absentCount}</div>
-              <div className="insight-chip-label">Absent Today</div>
-            </div>
-          </div>
-          <div className="insight-chip" style={{ flex: 1 }}>
-            <div className="insight-chip-icon" style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}>
-              <Clock size={15} />
-            </div>
-            <div>
-              <div className="insight-chip-val" style={{ color: 'var(--warning)' }}>{lateCount}</div>
-              <div className="insight-chip-label">Late Arrivals</div>
-            </div>
-          </div>
-          <div className="insight-chip" style={{ flex: 1 }}>
-            <div className="insight-chip-icon" style={{ background: 'var(--primary-soft)', color: 'var(--primary)' }}>
-              <Users size={15} />
-            </div>
-            <div>
-              <div className="insight-chip-val">{students.length}</div>
-              <div className="insight-chip-label">Total Class Enrolled</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Student Attendance Table */}
-      <div className="table-wrapper">
-        {/* Toolbar */}
-        <div className="table-toolbar">
-          <div className="table-search">
-            <Search size={13} color="var(--text-tertiary)" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name or roll no."
-              aria-label="Search students"
-            />
-          </div>
-          {filtered.length > 0 && (
-            <div className="flex gap-2">
-              <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}>
-                <CheckCircle size={13} />
-                Mark All Present
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => markAll('absent')}>
-                <XCircle size={13} />
-                Mark All Absent
-              </button>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 30 }}>Loading class roster...</div>
+      ) : (
+        <>
+          {/* Attendance Summary */}
+          {totalMarked > 0 && (
+            <div className="flex gap-3 mb-5">
+              <div className="insight-chip" style={{ flex: 1 }}>
+                <div className="insight-chip-icon" style={{ background: 'var(--success-soft)', color: 'var(--success)' }}>
+                  <CheckCircle size={15} />
+                </div>
+                <div>
+                  <div className="insight-chip-val" style={{ color: 'var(--success)' }}>{presentCount}</div>
+                  <div className="insight-chip-label">Present Today</div>
+                </div>
+              </div>
+              <div className="insight-chip" style={{ flex: 1 }}>
+                <div className="insight-chip-icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>
+                  <XCircle size={15} />
+                </div>
+                <div>
+                  <div className="insight-chip-val" style={{ color: 'var(--danger)' }}>{absentCount}</div>
+                  <div className="insight-chip-label">Absent Today</div>
+                </div>
+              </div>
+              <div className="insight-chip" style={{ flex: 1 }}>
+                <div className="insight-chip-icon" style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}>
+                  <Clock size={15} />
+                </div>
+                <div>
+                  <div className="insight-chip-val" style={{ color: 'var(--warning)' }}>{lateCount}</div>
+                  <div className="insight-chip-label">Late Arrivals</div>
+                </div>
+              </div>
+              <div className="insight-chip" style={{ flex: 1 }}>
+                <div className="insight-chip-icon" style={{ background: 'var(--primary-soft)', color: 'var(--primary)' }}>
+                  <Users size={15} />
+                </div>
+                <div>
+                  <div className="insight-chip-val">{students.length}</div>
+                  <div className="insight-chip-label">Total Class Enrolled</div>
+                </div>
+              </div>
             </div>
           )}
-        </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Student</th>
-              <th>Roll No.</th>
-              <th>Department</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((student, idx) => {
-              const status = attendance[student.id];
-              const initials = student.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
-              const avatarColor = avatarColors[idx % avatarColors.length];
+          {/* Student Attendance Table */}
+          <div className="table-wrapper">
+            {/* Toolbar */}
+            <div className="table-toolbar">
+              <div className="table-search">
+                <Search size={13} color="var(--text-tertiary)" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by name or roll no."
+                  aria-label="Search students"
+                />
+              </div>
+              {filtered.length > 0 && (
+                <div className="flex gap-2">
+                  <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}>
+                    <CheckCircle size={13} />
+                    Mark All Present
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => markAll('absent')}>
+                    <XCircle size={13} />
+                    Mark All Absent
+                  </button>
+                </div>
+              )}
+            </div>
 
-              return (
-                <tr key={student.id}>
-                  <td style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{idx + 1}</td>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className={`avatar avatar-sm ${avatarColor}`}>
-                        {initials}
-                      </div>
-                      <span className="font-semibold">{student.name}</span>
-                    </div>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 13 }}>
-                    {student.roll}
-                  </td>
-                  <td>
-                    <span className="badge badge-neutral">{student.dept}</span>
-                  </td>
-                  <td>
-                    {status === 'present' && <span className="badge badge-success"><span className="badge-dot" />Present</span>}
-                    {status === 'absent' && <span className="badge badge-danger"><span className="badge-dot" />Absent</span>}
-                    {status === 'late' && <span className="badge badge-warning"><span className="badge-dot" />Late</span>}
-                    {!status && <span className="badge badge-neutral">— Not marked</span>}
-                  </td>
-                  <td>
-                    <div className="attendance-toggle-group">
-                      <button
-                        className={`att-btn${status === 'present' ? ' present' : ''}`}
-                        onClick={() => setStatus(student.id, 'present')}
-                        title="Mark Present"
-                      >
-                        P
-                      </button>
-                      <button
-                        className={`att-btn${status === 'absent' ? ' absent' : ''}`}
-                        onClick={() => setStatus(student.id, 'absent')}
-                        title="Mark Absent"
-                      >
-                        A
-                      </button>
-                      <button
-                        className={`att-btn${status === 'late' ? ' late' : ''}`}
-                        onClick={() => setStatus(student.id, 'late')}
-                        title="Mark Late"
-                      >
-                        L
-                      </button>
-                    </div>
-                  </td>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Student</th>
+                  <th>Roll No.</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th>Action</th>
                 </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  <div className="empty-state">
-                    <div className="empty-state-icon">
-                      <Users size={22} />
-                    </div>
-                    <div className="empty-state-title">No students found</div>
-                    <div className="empty-state-desc">No students are currently enrolled under this Department, Year, and Section.</div>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {filtered.map((student, idx) => {
+                  const status = attendance[student.id];
+                  const initials = student.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                  const avatarColor = avatarColors[idx % avatarColors.length];
 
-        {/* Pagination footer */}
-        <div className="flex justify-between items-center" style={{ padding: '12px 18px', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Showing {filtered.length} of {students.length} students
-          </span>
-          <div className="flex gap-2">
-            <button className="btn btn-secondary btn-sm" disabled>Previous</button>
-            <button className="btn btn-secondary btn-sm" disabled>Next</button>
+                  return (
+                    <tr key={student.id}>
+                      <td style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{idx + 1}</td>
+                      <td>
+                        <div className="flex items-center gap-3">
+                          <div className={`avatar avatar-sm ${avatarColor}`}>
+                            {initials}
+                          </div>
+                          <span className="font-semibold">{student.name}</span>
+                        </div>
+                      </td>
+                      <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 13 }}>
+                        {student.roll}
+                      </td>
+                      <td>
+                        <span className="badge badge-neutral">{student.dept}</span>
+                      </td>
+                      <td>
+                        {status === 'present' && <span className="badge badge-success"><span className="badge-dot" />Present</span>}
+                        {status === 'absent' && <span className="badge badge-danger"><span className="badge-dot" />Absent</span>}
+                        {status === 'late' && <span className="badge badge-warning"><span className="badge-dot" />Late</span>}
+                        {!status && <span className="badge badge-neutral">— Not marked</span>}
+                      </td>
+                      <td>
+                        <div className="attendance-toggle-group">
+                          <button
+                            className={`att-btn${status === 'present' ? ' present' : ''}`}
+                            onClick={() => setStatus(student.id, 'present')}
+                            title="Mark Present"
+                          >
+                            P
+                          </button>
+                          <button
+                            className={`att-btn${status === 'absent' ? ' absent' : ''}`}
+                            onClick={() => setStatus(student.id, 'absent')}
+                            title="Mark Absent"
+                          >
+                            A
+                          </button>
+                          <button
+                            className={`att-btn${status === 'late' ? ' late' : ''}`}
+                            onClick={() => setStatus(student.id, 'late')}
+                            title="Mark Late"
+                          >
+                            L
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="empty-state">
+                        <div className="empty-state-icon">
+                          <Users size={22} />
+                        </div>
+                        <div className="empty-state-title">No students found</div>
+                        <div className="empty-state-desc">No students are currently enrolled under this Department, Year, and Section.</div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {/* Pagination footer */}
+            <div className="flex justify-between items-center" style={{ padding: '12px 18px', borderTop: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                Showing {filtered.length} of {students.length} students
+              </span>
+              <div className="flex gap-2">
+                <button className="btn btn-secondary btn-sm" disabled>Previous</button>
+                <button className="btn btn-secondary btn-sm" disabled>Next</button>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

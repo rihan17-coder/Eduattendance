@@ -12,7 +12,9 @@ import {
   Trash2,
   Edit2,
 } from 'lucide-react';
-import { getStudents, saveStudents, getStudentAttendanceRate, showToast } from '../utils/db';
+import { StudentService } from '../services/StudentService';
+import { AttendanceService } from '../services/AttendanceService';
+import { showToast, Student } from '../utils/db';
 
 const statusMeta = {
   good: { badge: 'badge-success', label: 'Good', icon: CheckCircle },
@@ -31,9 +33,11 @@ interface StudentFormData {
 }
 
 export default function Students() {
-  const [students, setStudents] = useState<any[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('All');
+  const [loading, setLoading] = useState(true);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,8 +53,23 @@ export default function Students() {
   // Dropdown menu state per row
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
+  const loadData = async (bypassCache = false) => {
+    try {
+      // First load from cache or quick DB call
+      const studentsList = await StudentService.getStudents(bypassCache);
+      setStudents(studentsList);
+      
+      const logsList = await AttendanceService.getAttendanceLogs(bypassCache);
+      setLogs(logsList);
+      setLoading(false);
+    } catch (e) {
+      showToast('Error syncing with Supabase database', 'error');
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setStudents(getStudents());
+    loadData();
 
     const handleGlobalSearch = () => {
       const q = localStorage.getItem('global_search_query');
@@ -90,45 +109,49 @@ export default function Students() {
     setActiveMenuId(null);
   };
 
-  const handleDeleteStudent = (id: string) => {
+  const handleDeleteStudent = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this student?')) {
-      const updated = students.filter(s => s.id !== id);
-      saveStudents(updated);
-      setStudents(updated);
-      setActiveMenuId(null);
-      showToast('Student profile deleted', 'success');
+      try {
+        setStudents(prev => prev.filter(s => s.id !== id));
+        await StudentService.deleteStudent(id);
+        setActiveMenuId(null);
+        showToast('Student profile deleted', 'success');
+        loadData(true);
+      } catch (err) {
+        showToast('Failed to delete student', 'error');
+        loadData();
+      }
     }
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingStudentId) {
-      // Edit
-      const updated = students.map(s => 
-        s.id === editingStudentId 
-          ? { ...s, ...formData } 
-          : s
-      );
-      saveStudents(updated);
-      setStudents(updated);
-      showToast('Student details updated successfully', 'success');
-    } else {
-      // Add
-      const newStudent = {
-        id: Date.now().toString(),
+    try {
+      const studentPayload = {
+        id: editingStudentId || undefined,
         name: formData.name,
         roll: formData.roll,
         dept: formData.dept,
         year: formData.year,
         section: formData.section,
-        status: 'good', // will auto update on next attendance take
+        status: 'good' as const,
       };
-      const updated = [...students, newStudent];
-      saveStudents(updated);
-      setStudents(updated);
-      showToast('New student enrolled successfully', 'success');
+
+      // Optimistic UI updates
+      if (editingStudentId) {
+        setStudents(prev => prev.map(s => s.id === editingStudentId ? { ...s, ...studentPayload, id: editingStudentId } : s));
+      } else {
+        setStudents(prev => [...prev, { ...studentPayload, id: 'temp-id-' + Date.now() }]);
+      }
+      setIsModalOpen(false);
+
+      await StudentService.saveStudent(studentPayload);
+      showToast(editingStudentId ? 'Student details updated successfully' : 'New student enrolled successfully', 'success');
+      loadData(true);
+    } catch (err) {
+      showToast('Error saving student details', 'error');
+      loadData();
     }
-    setIsModalOpen(false);
   };
 
   const filtered = students.filter(s => {
@@ -140,7 +163,7 @@ export default function Students() {
   const getStats = () => {
     let good = 0, warning = 0, low = 0;
     students.forEach(s => {
-      const rate = getStudentAttendanceRate(s.id);
+      const rate = AttendanceService.getStudentAttendanceRate(s.id, logs);
       if (rate >= 80) good++;
       else if (rate >= 75) warning++;
       else low++;
@@ -160,9 +183,9 @@ export default function Students() {
             <p className="page-subtitle">Manage enrolled students and track attendance details here.</p>
           </div>
           <div className="page-header-actions">
-            <button className="btn btn-secondary btn-sm" onClick={() => setDeptFilter('All')}>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setDeptFilter('All'); loadData(true); }}>
               <Filter size={13} />
-              Reset Filters
+              Sync DB &amp; Reset
             </button>
             <button className="btn btn-primary btn-sm" onClick={handleOpenAddModal}>
               <Plus size={13} />
@@ -172,217 +195,167 @@ export default function Students() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="stats-grid mb-6">
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon blue"><GraduationCap size={20} /></div>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '40px var(--text-secondary)' }}>Loading student records...</div>
+      ) : (
+        <>
+          {/* Summary Cards */}
+          <div className="stats-grid mb-6">
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon blue"><GraduationCap size={20} /></div>
+              </div>
+              <div className="stat-value">{students.length}</div>
+              <div className="stat-label">Total Students</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon green"><CheckCircle size={20} /></div>
+              </div>
+              <div className="stat-value">{good}</div>
+              <div className="stat-label">Good Standing</div>
+              <div className="stat-meta">≥ 80% attendance</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon yellow"><AlertCircle size={20} /></div>
+              </div>
+              <div className="stat-value">{warning}</div>
+              <div className="stat-label">Needs Attention</div>
+              <div className="stat-meta">75–79% attendance</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}><TrendingUp size={20} /></div>
+              </div>
+              <div className="stat-value">{low}</div>
+              <div className="stat-label">At Risk</div>
+              <div className="stat-meta">&lt; 75% attendance</div>
+            </div>
           </div>
-          <div className="stat-value">{students.length}</div>
-          <div className="stat-label">Total Students</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon green"><CheckCircle size={20} /></div>
-          </div>
-          <div className="stat-value">{good}</div>
-          <div className="stat-label">Good Standing</div>
-          <div className="stat-meta">≥ 80% attendance</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon yellow"><AlertCircle size={20} /></div>
-          </div>
-          <div className="stat-value">{warning}</div>
-          <div className="stat-label">Needs Attention</div>
-          <div className="stat-meta">75–79% attendance</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}><TrendingUp size={20} /></div>
-          </div>
-          <div className="stat-value">{low}</div>
-          <div className="stat-label">At Risk</div>
-          <div className="stat-meta">&lt; 75% attendance</div>
-        </div>
-      </div>
 
-      {/* Table */}
-      <div className="table-wrapper">
-        <div className="table-toolbar">
-          <div className="table-search">
-            <Search size={13} color="var(--text-tertiary)" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name or roll number..."
-              aria-label="Search students"
-            />
-          </div>
-          <div className="flex gap-2">
-            {['All', 'AI & DS', 'CSE', 'ECE'].map(dept => (
-              <button
-                key={dept}
-                className={`btn btn-sm ${deptFilter === dept ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setDeptFilter(dept)}
-              >
-                {dept}
-              </button>
-            ))}
-          </div>
-        </div>
+          {/* Table */}
+          <div className="table-wrapper">
+            <div className="table-toolbar">
+              <div className="table-search">
+                <Search size={13} color="var(--text-tertiary)" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by name or roll number..."
+                  aria-label="Search students"
+                />
+              </div>
+              <div className="flex gap-2">
+                {['All', 'AI & DS', 'CSE', 'ECE'].map(dept => (
+                  <button
+                    key={dept}
+                    className={`btn btn-sm ${deptFilter === dept ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setDeptFilter(dept)}
+                  >
+                    {dept}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        <table style={{ overflow: 'visible' }}>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Student</th>
-              <th>Roll No.</th>
-              <th>Department</th>
-              <th>Class &amp; Sec</th>
-              <th>Attendance</th>
-              <th>Status</th>
-              <th style={{ width: 60 }}></th>
-            </tr>
-          </thead>
-          <tbody style={{ overflow: 'visible' }}>
-            {filtered.map((student, idx) => {
-              const attendanceRate = getStudentAttendanceRate(student.id);
-              let statusKey: 'good' | 'warning' | 'low' = 'good';
-              if (attendanceRate < 75) statusKey = 'low';
-              else if (attendanceRate < 80) statusKey = 'warning';
-              
-              const meta = statusMeta[statusKey];
-              const initials = student.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
-              const avatarColor = avatarColors[idx % avatarColors.length];
-
-              return (
-                <tr key={student.id} style={{ overflow: 'visible' }}>
-                  <td style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{idx + 1}</td>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className={`avatar avatar-sm ${avatarColor}`}>{initials}</div>
-                      <span className="font-semibold">{student.name}</span>
-                    </div>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 13 }}>
-                    {student.roll}
-                  </td>
-                  <td><span className="badge badge-primary">{student.dept}</span></td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{student.year} — {student.section || 'Section A'}</td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <div className="progress-bar" style={{ width: 72 }}>
-                        <div
-                          className={`progress-fill ${attendanceRate >= 80 ? 'green' : attendanceRate >= 75 ? 'yellow' : 'red'}`}
-                          style={{ width: `${attendanceRate}%` }}
-                        />
-                      </div>
-                      <span style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: attendanceRate >= 80 ? 'var(--success)' : attendanceRate >= 75 ? 'var(--warning)' : 'var(--danger)',
-                      }}>
-                        {attendanceRate}%
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`badge ${meta.badge}`}>
-                      <span className="badge-dot" />
-                      {meta.label}
-                    </span>
-                  </td>
-                  <td style={{ position: 'relative', overflow: 'visible' }}>
-                    <button 
-                      className="icon-btn" 
-                      onClick={() => setActiveMenuId(activeMenuId === student.id ? null : student.id)}
-                      style={{ border: 'none', background: 'transparent', width: 28, height: 28 }}
-                    >
-                      <MoreHorizontal size={16} color="var(--text-tertiary)" />
-                    </button>
-                    
-                    {activeMenuId === student.id && (
-                      <div style={{
-                        position: 'absolute',
-                        right: 8,
-                        top: 36,
-                        background: '#fff',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        boxShadow: 'var(--shadow-md)',
-                        zIndex: 100,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        minWidth: 120,
-                      }}>
-                        <button 
-                          onClick={() => handleOpenEditModal(student)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            textAlign: 'left',
-                            fontSize: 12.5,
-                            color: 'var(--text-secondary)',
-                            cursor: 'pointer',
-                            width: '100%',
-                          }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteStudent(student.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            textAlign: 'left',
-                            fontSize: 12.5,
-                            color: 'var(--danger)',
-                            cursor: 'pointer',
-                            width: '100%',
-                            borderTop: '1px solid var(--border)',
-                          }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
-                    )}
-                  </td>
+            <table style={{ overflow: 'visible' }}>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Student</th>
+                  <th>Roll No.</th>
+                  <th>Department</th>
+                  <th>Class &amp; Sec</th>
+                  <th>Attendance</th>
+                  <th>Status</th>
+                  <th style={{ width: 60 }}></th>
                 </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={8}>
-                  <div className="empty-state">
-                    <div className="empty-state-icon"><Search size={22} /></div>
-                    <div className="empty-state-title">No students found</div>
-                    <div className="empty-state-desc">Try adjusting your search or filter.</div>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              </thead>
+              <tbody style={{ overflow: 'visible' }}>
+                {filtered.map((student, idx) => {
+                  const attendanceRate = AttendanceService.getStudentAttendanceRate(student.id, logs);
+                  let statusKey: 'good' | 'warning' | 'low' = 'good';
+                  if (attendanceRate < 75) statusKey = 'low';
+                  else if (attendanceRate < 80) statusKey = 'warning';
+                  
+                  const meta = statusMeta[statusKey];
+                  const initials = student.name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
+                  const avatarColor = avatarColors[idx % avatarColors.length];
 
-        <div className="flex justify-between items-center" style={{ padding: '12px 18px', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Showing {filtered.length} of {students.length} students
-          </span>
-          <div className="flex gap-2">
-            <button className="btn btn-secondary btn-sm" disabled>Previous</button>
-            <button className="btn btn-secondary btn-sm" disabled>Next</button>
+                  return (
+                    <tr key={student.id} style={{ overflow: 'visible' }}>
+                      <td style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{idx + 1}</td>
+                      <td>
+                        <div className="flex items-center gap-3">
+                          <div className={`avatar avatar-sm ${avatarColor}`}>{initials}</div>
+                          <span className="font-semibold">{student.name}</span>
+                        </div>
+                      </td>
+                      <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 13 }}>
+                        {student.roll}
+                      </td>
+                      <td><span className="badge badge-primary">{student.dept}</span></td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{student.year} — {student.section || 'Section A'}</td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <div className="progress-bar" style={{ width: 72 }}>
+                            <div
+                              className={`progress-fill ${attendanceRate >= 80 ? 'green' : attendanceRate >= 75 ? 'yellow' : 'red'}`}
+                              style={{ width: `${attendanceRate}%` }}
+                            />
+                          </div>
+                          <span style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: attendanceRate >= 80 ? 'var(--success)' : attendanceRate >= 75 ? 'var(--warning)' : 'var(--danger)',
+                          }}>
+                            {attendanceRate}%
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${meta.badge}`}>
+                          <span className="badge-dot" />
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td style={{ position: 'relative', overflow: 'visible' }}>
+                        <button 
+                          className="icon-btn" 
+                          onClick={() => setActiveMenuId(activeMenuId === student.id ? null : student.id)}
+                          style={{ border: 'none', background: 'transparent', width: 28, height: 28 }}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                        
+                        {activeMenuId === student.id && (
+                          <div className="card shadow-lg" style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: 30,
+                            zIndex: 100,
+                            padding: '6px 0',
+                            width: 140,
+                            border: '1px solid var(--border)',
+                          }}>
+                            <button className="flex items-center gap-2" onClick={() => handleOpenEditModal(student)} style={{ width: '100%', border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                              <Edit2 size={12} /> Edit details
+                            </button>
+                            <button className="flex items-center gap-2" onClick={() => handleDeleteStudent(student.id)} style={{ width: '100%', border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', color: 'var(--danger)' }}>
+                              <Trash2 size={12} /> Delete student
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
       {/* Modal Dialog */}
       {isModalOpen && (

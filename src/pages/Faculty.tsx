@@ -13,7 +13,8 @@ import {
   Trash2,
   Edit2,
 } from 'lucide-react';
-import { getFaculty, saveFaculty, showToast } from '../utils/db';
+import { FacultyService } from '../services/FacultyService';
+import { showToast, FacultyMember } from '../utils/db';
 
 const avatarColors = ['avatar-blue', 'avatar-purple', 'avatar-green', 'avatar-orange', 'avatar-teal', 'avatar-pink'];
 
@@ -27,9 +28,10 @@ interface FacultyFormData {
 }
 
 export default function Faculty() {
-  const [faculty, setFaculty] = useState<any[]>([]);
+  const [faculty, setFaculty] = useState<FacultyMember[]>([]);
   const [search, setSearch] = useState('');
   const [view, setView] = useState<'grid' | 'table'>('grid');
+  const [loading, setLoading] = useState(true);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -46,8 +48,19 @@ export default function Faculty() {
   // Action Menu state
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
+  const loadData = async (bypassCache = false) => {
+    try {
+      const list = await FacultyService.getFaculty(bypassCache);
+      setFaculty(list);
+      setLoading(false);
+    } catch (e) {
+      showToast('Error syncing faculty roster from Supabase', 'error');
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setFaculty(getFaculty());
+    loadData();
 
     const handleGlobalSearch = () => {
       const q = localStorage.getItem('global_search_query');
@@ -82,63 +95,61 @@ export default function Faculty() {
       subjects: f.subjects.join(', '),
       email: f.email,
       phone: f.phone,
-      status: f.status,
+      status: f.status || 'active',
     });
     setEditingFacultyId(f.id);
     setIsModalOpen(true);
     setActiveMenuId(null);
   };
 
-  const handleDeleteFaculty = (id: string) => {
+  const handleDeleteFaculty = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this faculty member?')) {
-      const updated = faculty.filter(f => f.id !== id);
-      saveFaculty(updated);
-      setFaculty(updated);
-      setActiveMenuId(null);
-      showToast('Faculty member profile deleted', 'success');
+      try {
+        setFaculty(prev => prev.filter(f => f.id !== id));
+        await FacultyService.deleteFaculty(id);
+        setActiveMenuId(null);
+        showToast('Faculty member profile deleted', 'success');
+        loadData(true);
+      } catch (err) {
+        showToast('Failed to delete faculty member', 'error');
+        loadData();
+      }
     }
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const subjectsArray = formData.subjects
       .split(',')
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
-    if (editingFacultyId) {
-      // Edit
-      const updated = faculty.map(f =>
-        f.id === editingFacultyId
-          ? { ...f, ...formData, subjects: subjectsArray }
-          : f
-      );
-      saveFaculty(updated);
-      setFaculty(updated);
-      showToast('Faculty details updated successfully', 'success');
-    } else {
-      // Add
-      const initials = formData.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-      const color = avatarColors[faculty.length % avatarColors.length];
-      const newFaculty = {
-        id: Date.now().toString(),
+    try {
+      const facultyPayload = {
+        id: editingFacultyId || undefined,
         name: formData.name,
         dept: formData.dept,
         subjects: subjectsArray,
         email: formData.email,
         phone: formData.phone,
         status: formData.status,
-        students: Math.floor(Math.random() * 40) + 80, // simulated
-        attendance: Math.floor(Math.random() * 12) + 85, // simulated
-        initials,
-        color,
       };
-      const updated = [...faculty, newFaculty];
-      saveFaculty(updated);
-      setFaculty(updated);
-      showToast('New faculty member added successfully', 'success');
+
+      // Optimistic state update
+      if (editingFacultyId) {
+        setFaculty(prev => prev.map(f => f.id === editingFacultyId ? { ...f, ...facultyPayload, id: editingFacultyId } : f));
+      } else {
+        setFaculty(prev => [...prev, { ...facultyPayload, id: 'temp-' + Date.now(), status: formData.status }]);
+      }
+      setIsModalOpen(false);
+
+      await FacultyService.saveFaculty(facultyPayload);
+      showToast(editingFacultyId ? 'Faculty details updated successfully' : 'New faculty member added successfully', 'success');
+      loadData(true);
+    } catch (err) {
+      showToast('Error saving faculty member details', 'error');
+      loadData();
     }
-    setIsModalOpen(false);
   };
 
   const filtered = faculty.filter(f =>
@@ -153,292 +164,175 @@ export default function Faculty() {
         <div className="page-header-row">
           <div>
             <h1 className="page-title">Faculty Management</h1>
-            <p className="page-subtitle">Manage teaching staff, roles, and subject assignments here.</p>
+            <p className="page-subtitle">Manage department instructors, subjects, and schedules.</p>
           </div>
           <div className="page-header-actions">
-            <button className="btn btn-secondary btn-sm" onClick={() => setView(view === 'grid' ? 'table' : 'grid')}>
-              <Filter size={13} />
-              Toggle View
+            <button className="btn btn-secondary btn-sm" onClick={() => loadData(true)}>
+              <TrendingUp size={13} />
+              Sync DB
             </button>
             <button className="btn btn-primary btn-sm" onClick={handleOpenAddModal}>
               <Plus size={13} />
-              Add Faculty
+              Add Instructor
             </button>
           </div>
         </div>
       </div>
 
-      {/* Stats Row */}
-      <div className="stats-grid mb-6">
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon blue"><Users size={20} /></div>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '40px var(--text-secondary)' }}>Loading faculty roster...</div>
+      ) : (
+        <>
+          {/* Summary Cards */}
+          <div className="stats-grid mb-6">
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon blue"><Users size={20} /></div>
+              </div>
+              <div className="stat-value">{faculty.length}</div>
+              <div className="stat-label">Total Faculty</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon green"><BookOpen size={20} /></div>
+              </div>
+              <div className="stat-value">
+                {Array.from(new Set(faculty.flatMap(f => f.subjects))).length}
+              </div>
+              <div className="stat-label">Unique Subjects</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card-top">
+                <div className="stat-card-icon purple"><TrendingUp size={20} /></div>
+              </div>
+              <div className="stat-value">92%</div>
+              <div className="stat-label">Average Lecture Delivery</div>
+            </div>
           </div>
-          <div className="stat-value">{faculty.length}</div>
-          <div className="stat-label">Total Faculty</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon green"><BookOpen size={20} /></div>
-          </div>
-          <div className="stat-value">{faculty.reduce((acc, f) => acc + f.subjects.length, 0)}</div>
-          <div className="stat-label">Active Subjects</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-top">
-            <div className="stat-card-icon purple"><TrendingUp size={20} /></div>
-          </div>
-          <div className="stat-value">
-            {faculty.length > 0
-              ? Math.round(faculty.reduce((acc, f) => acc + (f.attendance || 90), 0) / faculty.length) + '%'
-              : '—'}
-          </div>
-          <div className="stat-label">Avg. Class Attendance</div>
-        </div>
-      </div>
 
-      {/* Table / Grid */}
-      <div className="table-wrapper">
-        <div className="table-toolbar">
-          <div className="table-search">
-            <Search size={13} color="var(--text-tertiary)" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search faculty by name or department..."
-              aria-label="Search faculty"
-            />
+          {/* Roster toolbar */}
+          <div className="table-toolbar mb-4">
+            <div className="table-search">
+              <Search size={13} color="var(--text-tertiary)" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search instructors by name or department..."
+                aria-label="Search faculty"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button className={`btn btn-sm ${view === 'grid' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('grid')}>Grid View</button>
+              <button className={`btn btn-sm ${view === 'table' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('table')}>Table View</button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              className={`btn btn-sm ${view === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setView('grid')}
-            >
-              Grid
-            </button>
-            <button
-              className={`btn btn-sm ${view === 'table' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setView('table')}
-            >
-              Table
-            </button>
-          </div>
-        </div>
 
-        {view === 'table' ? (
-          <table style={{ overflow: 'visible' }}>
-            <thead>
-              <tr>
-                <th>Faculty</th>
-                <th>Department</th>
-                <th>Subjects</th>
-                <th>Students</th>
-                <th>Attendance</th>
-                <th>Status</th>
-                <th style={{ width: 60 }}></th>
-              </tr>
-            </thead>
-            <tbody style={{ overflow: 'visible' }}>
-              {filtered.map((f, idx) => (
-                <tr key={f.id} style={{ overflow: 'visible' }}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className={`avatar avatar-md ${f.color}`}>{f.initials}</div>
-                      <div>
-                        <div className="font-semibold">{f.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{f.email}</div>
+          {view === 'grid' ? (
+            <div className="faculty-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
+              {filtered.map((f, idx) => {
+                const initials = f.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+                const avatarColor = avatarColors[idx % avatarColors.length];
+                return (
+                  <div key={f.id} className="card" style={{ position: 'relative' }}>
+                    <div style={{ position: 'absolute', right: 16, top: 16 }}>
+                      <button className="icon-btn" onClick={() => setActiveMenuId(activeMenuId === f.id ? null : f.id)} style={{ border: 'none', background: 'transparent' }}>
+                        <MoreHorizontal size={14} />
+                      </button>
+                      {activeMenuId === f.id && (
+                        <div className="card shadow-lg" style={{
+                          position: 'absolute',
+                          right: 0,
+                          top: 24,
+                          zIndex: 100,
+                          padding: '6px 0',
+                          width: 140,
+                          border: '1px solid var(--border)',
+                        }}>
+                          <button className="flex items-center gap-2" onClick={() => handleOpenEditModal(f)} style={{ width: '100%', border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            <Edit2 size={12} /> Edit profile
+                          </button>
+                          <button className="flex items-center gap-2" onClick={() => handleDeleteFaculty(f.id)} style={{ width: '100%', border: 'none', background: 'transparent', padding: '8px 12px', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', color: 'var(--danger)' }}>
+                            <Trash2 size={12} /> Remove faculty
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      <div className="flex items-center gap-3">
+                        <div className={`avatar avatar-md ${avatarColor}`}>{initials}</div>
+                        <div>
+                          <h3 style={{ fontSize: 14.5, fontWeight: 700, margin: 0 }}>{f.name}</h3>
+                          <span className="badge badge-primary" style={{ marginTop: 4, display: 'inline-block' }}>{f.dept}</span>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td><span className="badge badge-primary">{f.dept}</span></td>
-                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{f.subjects.join(', ')}</td>
-                  <td><span className="badge badge-neutral">{f.students}</span></td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <div className="progress-bar" style={{ width: 60, display: 'inline-block' }}>
-                        <div className="progress-fill blue" style={{ width: `${f.attendance}%` }} />
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: f.attendance >= 90 ? 'var(--success)' : 'var(--warning)' }}>
-                        {f.attendance}%
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`badge ${f.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                      <span className="badge-dot" />
-                      {f.status === 'active' ? 'Active' : 'On Leave'}
-                    </span>
-                  </td>
-                  <td style={{ position: 'relative', overflow: 'visible' }}>
-                    <button
-                      className="icon-btn"
-                      onClick={() => setActiveMenuId(activeMenuId === f.id ? null : f.id)}
-                      style={{ border: 'none', background: 'transparent', width: 28, height: 28 }}
-                    >
-                      <MoreHorizontal size={16} color="var(--text-tertiary)" />
-                    </button>
 
-                    {activeMenuId === f.id && (
-                      <div style={{
-                        position: 'absolute',
-                        right: 8,
-                        top: 36,
-                        background: '#fff',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        boxShadow: 'var(--shadow-md)',
-                        zIndex: 100,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        minWidth: 120,
-                      }}>
-                        <button
-                          onClick={() => handleOpenEditModal(f)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            textAlign: 'left',
-                            fontSize: 12.5,
-                            color: 'var(--text-secondary)',
-                            cursor: 'pointer',
-                            width: '100%',
-                          }}
-                        >
-                          <Edit2 size={13} /> Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteFaculty(f.id)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            textAlign: 'left',
-                            fontSize: 12.5,
-                            color: 'var(--danger)',
-                            cursor: 'pointer',
-                            width: '100%',
-                            borderTop: '1px solid var(--border)',
-                          }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5, color: 'var(--text-secondary)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                        <div className="flex items-center gap-2">
+                          <Mail size={13} color="var(--text-tertiary)" />
+                          <span>{f.email}</span>
+                        </div>
+                        {f.phone && (
+                          <div className="flex items-center gap-2">
+                            <Phone size={13} color="var(--text-tertiary)" />
+                            <span>{f.phone}</span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7}>
-                    <div className="empty-state">
-                      <div className="empty-state-icon"><Search size={22} /></div>
-                      <div className="empty-state-title">No faculty members found</div>
-                      <div className="empty-state-desc">Try modifying your search text.</div>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        ) : (
-          <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-            {filtered.map(f => (
-              <div key={f.id} className="subject-card" style={{ position: 'relative' }}>
-                <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                  <button
-                    className="icon-btn"
-                    onClick={() => setActiveMenuId(activeMenuId === f.id ? null : f.id)}
-                    style={{ border: 'none', background: 'transparent' }}
-                  >
-                    <MoreHorizontal size={14} color="var(--text-tertiary)" />
-                  </button>
-                  {activeMenuId === f.id && (
-                    <div style={{
-                      position: 'absolute',
-                      right: 0,
-                      top: 24,
-                      background: '#fff',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius-md)',
-                      boxShadow: 'var(--shadow-md)',
-                      zIndex: 100,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      minWidth: 100,
-                    }}>
-                      <button onClick={() => handleOpenEditModal(f)} style={{ padding: '6px 12px', border: 'none', background: 'transparent', fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>Edit</button>
-                      <button onClick={() => handleDeleteFaculty(f.id)} style={{ padding: '6px 12px', border: 'none', background: 'transparent', fontSize: 12, cursor: 'pointer', color: 'var(--danger)', textAlign: 'left', borderTop: '1px solid var(--border)' }}>Delete</button>
-                    </div>
-                  )}
-                </div>
 
-                <div className="subject-card-header">
-                  <div className="flex items-center gap-3">
-                    <div className={`avatar avatar-lg ${f.color}`}>{f.initials}</div>
-                    <div>
-                      <div className="subject-name">{f.name}</div>
-                      <div className="subject-code">{f.dept}</div>
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 6 }}>Assigned subjects</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {f.subjects.map(sub => (
+                            <span key={sub} className="badge badge-neutral" style={{ fontSize: 11 }}>{sub}</span>
+                          ))}
+                          {f.subjects.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)' }}>No subjects assigned</span>}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <span className={`badge ${f.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                    {f.status === 'active' ? 'Active' : 'Leave'}
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 14 }}>
-                  {f.subjects.map(s => (
-                    <span key={s} className="badge badge-neutral">{s}</span>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Instructor</th>
+                    <th>Department</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Assigned Subjects</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(f => (
+                    <tr key={f.id}>
+                      <td className="font-semibold">{f.name}</td>
+                      <td><span className="badge badge-primary">{f.dept}</span></td>
+                      <td>{f.email}</td>
+                      <td>{f.phone}</td>
+                      <td>
+                        <div className="flex flex-wrap gap-1">
+                          {f.subjects.map(s => <span key={s} className="badge badge-neutral" style={{ fontSize: 11 }}>{s}</span>)}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="flex gap-2">
+                          <button className="btn btn-secondary btn-sm" onClick={() => handleOpenEditModal(f)}>Edit</button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => handleDeleteFaculty(f.id)} style={{ color: 'var(--danger)' }}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Avg. Attendance</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: f.attendance >= 90 ? 'var(--success)' : 'var(--warning)' }}>{f.attendance}%</span>
-                  </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill blue" style={{ width: `${f.attendance}%` }} />
-                  </div>
-                </div>
-
-                <div className="flex gap-3 mt-3" style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  <a href={`mailto:${f.email}`} className="flex items-center gap-1" style={{ fontSize: 12, color: 'var(--text-secondary)', textDecoration: 'none' }}>
-                    <Mail size={12} /> Email
-                  </a>
-                  <span style={{ color: 'var(--border)' }}>|</span>
-                  <span className="flex items-center gap-1" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    <Users size={12} /> {f.students} students
-                  </span>
-                </div>
-              </div>
-            ))}
-            {filtered.length === 0 && (
-              <div style={{ gridColumn: '1 / -1' }} className="empty-state">
-                <div className="empty-state-icon"><Search size={22} /></div>
-                <div className="empty-state-title">No faculty members found</div>
-                <div className="empty-state-desc">Try modifying your search or click 'Add Faculty'.</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-between items-center" style={{ padding: '12px 18px', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Showing {filtered.length} of {faculty.length} faculty members
-          </span>
-          <div className="flex gap-2">
-            <button className="btn btn-secondary btn-sm" disabled>Previous</button>
-            <button className="btn btn-secondary btn-sm" disabled>Next</button>
-          </div>
-        </div>
-      </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Modal Dialog */}
       {isModalOpen && (
@@ -457,23 +351,20 @@ export default function Faculty() {
         }}>
           <div className="card" style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="card-title">{editingFacultyId ? 'Edit Faculty Details' : 'Add New Faculty Member'}</div>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
-              >
+              <div className="card-title">{editingFacultyId ? 'Edit Instructor Details' : 'Add New Instructor'}</div>
+              <button onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
                 <X size={18} />
               </button>
             </div>
-
+            
             <form onSubmit={handleFormSubmit} className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div className="form-group">
                 <label className="form-label">Full Name</label>
-                <input
-                  type="text"
-                  className="form-input"
+                <input 
+                  type="text" 
+                  className="form-input" 
                   required
-                  placeholder="e.g. Dr. Arun Patel"
+                  placeholder="e.g. Dr. Ramesh Kumar"
                   value={formData.name}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
                 />
@@ -481,25 +372,24 @@ export default function Faculty() {
 
               <div className="form-group">
                 <label className="form-label">Department</label>
-                <select
+                <select 
                   className="form-select"
                   value={formData.dept}
                   onChange={e => setFormData({ ...formData, dept: e.target.value })}
                 >
                   <option value="AI & DS">AI &amp; DS</option>
-                  <option value="CSE">Computer Science</option>
-                  <option value="ECE">Electronics</option>
-                  <option value="ME">Mechanical</option>
+                  <option value="CSE">CSE</option>
+                  <option value="ECE">ECE</option>
+                  <option value="ME">ME</option>
                 </select>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Subjects Taught (comma separated)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  required
-                  placeholder="e.g. Machine Learning, Python"
+                <label className="form-label">Subjects (comma-separated)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. ML (AI301), Python (AI101)"
                   value={formData.subjects}
                   onChange={e => setFormData({ ...formData, subjects: e.target.value })}
                 />
@@ -507,11 +397,11 @@ export default function Faculty() {
 
               <div className="form-group">
                 <label className="form-label">Email Address</label>
-                <input
-                  type="email"
-                  className="form-input"
+                <input 
+                  type="email" 
+                  className="form-input" 
                   required
-                  placeholder="e.g. a.patel@edu.in"
+                  placeholder="e.g. r.kumar@edu.in"
                   value={formData.email}
                   onChange={e => setFormData({ ...formData, email: e.target.value })}
                 />
@@ -519,33 +409,18 @@ export default function Faculty() {
 
               <div className="form-group">
                 <label className="form-label">Phone Number</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  required
-                  placeholder="e.g. +91 98765 43210"
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. +91 99999 88888"
                   value={formData.phone}
                   onChange={e => setFormData({ ...formData, phone: e.target.value })}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Status</label>
-                <select
-                  className="form-select"
-                  value={formData.status}
-                  onChange={e => setFormData({ ...formData, status: e.target.value as any })}
-                >
-                  <option value="active">Active</option>
-                  <option value="on-leave">On Leave</option>
-                </select>
-              </div>
-
               <div className="flex gap-2 justify-end" style={{ marginTop: 12 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">
-                  {editingFacultyId ? 'Save Changes' : 'Add Faculty'}
-                </button>
+                <button type="submit" className="btn btn-primary">{editingFacultyId ? 'Save Changes' : 'Add Instructor'}</button>
               </div>
             </form>
           </div>
